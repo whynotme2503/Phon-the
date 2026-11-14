@@ -127,7 +127,10 @@ function vToday(){const d=curDay(),dd=Math.min(Math.max(d,1),70),p=phaseOf(dd),d
   <section class="card"><h2>Mốc thời gian</h2><div class="row">
    <label class="fld" for="in-start">Ngày bắt đầu<input type="date" id="in-start" value="${esc(S.start)}" data-c="start"></label>
    <label class="fld" for="in-exam">Ngày thi (nếu đã đăng ký)<input type="date" id="in-exam" value="${esc(S.exam)}" data-c="exam"></label></div>
-   <p class="muted small">Lộ trình dài 70 ngày tính từ ngày bắt đầu. Nếu ngày thi sớm hơn, hãy rút bớt giai đoạn 2 trước, giữ nguyên giai đoạn 3.</p></section>`}
+   <p class="muted small">Lộ trình dài 70 ngày tính từ ngày bắt đầu. Nếu ngày thi sớm hơn, hãy rút bớt giai đoạn 2 trước, giữ nguyên giai đoạn 3.</p></section>
+  <section class="card"><h2>Sao lưu tiến độ</h2><p>Tiến độ lưu riêng trên từng thiết bị. Tải file sao lưu về rồi nhập ở máy khác để học tiếp, hoặc giữ lại phòng khi xoá dữ liệu trình duyệt.</p>
+   <div class="row"><button class="btn sm" data-a="export">Tải file sao lưu</button><label class="btn sm ghost" for="in-import">Nhập file sao lưu<input type="file" id="in-import" accept="application/json,.json" data-c="import" hidden></label></div>
+   <p class="muted small">Nhập file sẽ thay toàn bộ tiến độ đang có trên thiết bị này.</p></section>`}
 
 /* ===== Lộ trình ===== */
 function vPlan(){const d=Math.min(Math.max(curDay(),1),70),sel=ui.day||d;
@@ -308,6 +311,8 @@ const ACT={
  close(){if(sub&&sub.type==='mock'){clearInterval(tick);stopSpeak()}sub=null;render();scrollTo(0,0)},
  async say(el){const ok=await speak([{t:el.dataset.t,s:'n'}]);if(!ok)toast(noVoiceMsg)},
  stop(){stopSpeak()},
+ export(){const blob=new Blob([JSON.stringify(S)],{type:'application/json'}),u=URL.createObjectURL(blob),l=document.createElement('a');l.href=u;l.download='hoc-phon-tien-do-'+isoOf(today())+'.json';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);toast('Đã tạo file sao lưu. Xem trong thư mục tải về.')},
+ async install(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null;showInstall()},
  band(el){ui.band=el.dataset.b;stopSpeak();render()},
  async play(el){const x=LISTEN.find(i=>i.id===el.dataset.id),L=parseLines(x.l);x.qs.forEach(([q],i)=>L.push({t:(x.qs.length>1?`第${'一二三'[i]}題，`:'問題：')+q,s:'n'}));
    const ok=await speak(L);if(!ok){const m=$('#tts-msg');if(m){m.hidden=false;m.textContent=noVoiceMsg}}},
@@ -328,10 +333,16 @@ const ACT={
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,6000)}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!el.dataset.a||el.disabled)return;if(el.tagName==='INPUT')return;const f=ACT[el.dataset.a];if(f)f(el)});
 document.addEventListener('change',e=>{const el=e.target;if(el.dataset.a==='task')return ACT.task(el);const c=el.dataset.c;if(!c||c==='vq')return;
+  if(c==='import'){const f=el.files&&el.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d!=='object'||typeof d.srs!=='object'||!d.start)throw 0;S=Object.assign(defaults(),d);save();render();toast('Đã nhập tiến độ từ file sao lưu.')}).catch(()=>toast('File này không phải file sao lưu của web. Hãy chọn file .json đã tải từ nút Tải file sao lưu.'));return}
   if(c==='start'){if(el.value){S.start=el.value;ui.day=null}}else if(c==='exam')S.exam=el.value;else if(c==='rate')S.rate=+el.value;else if(c==='voice')S.voice=el.value;save();if(c==='start'||c==='exam')render()});
 document.addEventListener('input',e=>{if(e.target.dataset.c==='vq'){ui.vq=e.target.value;const f=ui.vq.trim().toLowerCase();document.querySelectorAll('#vtab tbody tr').forEach(tr=>tr.hidden=!!f&&!tr.textContent.toLowerCase().includes(f))}});
 document.addEventListener('keydown',e=>{if(!sub||sub.type!=='study'||sub.i>=sub.q.length)return;if(e.target.closest('input,select,button')&&e.key===' ')return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();ACT.flip()}else if(sub.flip&&(e.key==='1'||e.key==='2'))ACT.grade({dataset:{ok:e.key==='2'?'1':'0'}})});
 try{speechSynthesis.onvoiceschanged=()=>{}}catch(e){}voices();
 if(window.claude&&claude.use)claude.use('tts').then(t=>{TTS.cl=t}).catch(()=>{});
+let installEvt=null;
+function showInstall(){const b=$('#install');if(b)b.hidden=!installEvt}
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;showInstall()});
+addEventListener('appinstalled',()=>{installEvt=null;showInstall()});
+if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
 render();initCloud();
