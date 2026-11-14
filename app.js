@@ -35,15 +35,18 @@ const TTS={cl:null,tok:0};
 function voices(){try{return speechSynthesis.getVoices()}catch(e){return[]}}
 const twVoice=()=>voices().find(v=>/zh[-_](TW|Hant)/i.test(v.lang))||null;
 const zhVoice=()=>voices().find(v=>/^zh/i.test(v.lang))||null;
-function stopSpeak(){TTS.tok++;try{speechSynthesis.cancel()}catch(e){}try{TTS.cl&&TTS.cl.stop()}catch(e){}}
+/* Safari trên iPhone nuốt mất câu đọc nếu vừa cancel() xong đã speak() ngay, nên chỉ huỷ khi thật sự đang đọc */
+function stopSpeak(){TTS.tok++;let was=false;try{was=speechSynthesis.speaking||speechSynthesis.pending;if(was)speechSynthesis.cancel()}catch(e){}try{TTS.cl&&TTS.cl.stop()}catch(e){}return was}
 function parseLines(l){return l.map(x=>{const m=/^(男|女)：(.*)$/s.exec(x);return m?{t:m[2],s:m[1]==='男'?'m':'f'}:{t:x,s:'n'}})}
 function ttsMode(){const tw=twVoice();if(!voices().length&&'speechSynthesis' in window&&!TTS.cl)return 'b';if(S.voice==='browser')return (tw||zhVoice())?'b':TTS.cl?'c':'';if(S.voice==='claude')return TTS.cl?'c':(tw||zhVoice())?'b':'';return tw?'b':TTS.cl?'c':zhVoice()?'b':''}
-async function speak(lines){stopSpeak();const my=TTS.tok,mode=ttsMode();
+async function speak(lines){const was=stopSpeak();const my=TTS.tok,mode=ttsMode();
   if(!mode)return false;
   if(mode==='c'){try{await TTS.cl.speak(lines.map(l=>({text:l.t,voice:l.s==='f'?'airy':l.s==='m'?'rounded':'buttery',language:'zh-TW'})),{rate:Math.min(1.5,Math.max(.7,S.rate))});return true}catch(e){return my!==TTS.tok}}
   const v=twVoice()||zhVoice();
+  if(was)await sleep(250);
+  try{speechSynthesis.resume()}catch(e){}
   for(const l of lines){for(const part of l.t.match(/[^。！？；]+[。！？；]?/g)||[l.t]){if(my!==TTS.tok)return true;
-    await new Promise(res=>{const u=new SpeechSynthesisUtterance(part);u.lang='zh-TW';u.voice=v;u.rate=S.rate;u.pitch=l.s==='f'?1.2:l.s==='m'?.8:1;u.onend=res;u.onerror=res;speechSynthesis.speak(u)})}
+    await new Promise(res=>{const u=new SpeechSynthesisUtterance(part);u.lang=v?v.lang:'zh-TW';if(v)u.voice=v;u.volume=1;u.rate=S.rate;u.pitch=l.s==='f'?1.2:l.s==='m'?.8:1;u.onend=res;u.onerror=res;speechSynthesis.speak(u)})}
     if(my!==TTS.tok)return true;await sleep(400)}
   return true}
 const noVoiceMsg='Thiết bị này chưa có giọng đọc tiếng Trung. Hãy mở trang bằng Chrome hoặc Edge trên máy tính, hoặc cài giọng 中文（台灣） trong phần cài đặt giọng nói của máy.';
