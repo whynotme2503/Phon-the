@@ -23,12 +23,14 @@ LISTEN.forEach((x,i)=>x.id='l'+i);READ.forEach((x,i)=>x.id='r'+i);GAPS.forEach((
 const KEY='tocfl-on-thi-v1';
 const defaults=()=>({start:isoOf(today()),exam:'',done:{},srs:{},w:{},rt:{},ex:{},dr:{},q:{},hist:[],voice:'auto',rate:1,t:0});
 let S=defaults();
-try{const raw=localStorage.getItem(KEY);if(raw)S=Object.assign(defaults(),JSON.parse(raw))}catch(e){}
+/* Đổi tiến độ của cách chia đơn vị cũ sang cách chia hiện tại */
+function normalize(o){const s=Object.assign(defaults(),o);if(s.wv!==WV){if((s.wv||1)===1&&Object.keys(s.w).length){const nw={};for(const k in s.w)if(MIG[k]!=null)nw[MIG[k]]=s.w[k];s.w=nw;const r0=s.rt[0];s.rt=r0!=null?{0:r0}:{};const d1=s.dr.d1;s.dr=d1!=null?{d1}:{}}s.wv=WV}return s}
+try{const raw=localStorage.getItem(KEY);if(raw)S=normalize(JSON.parse(raw));else S.wv=WV}catch(e){}
 let cloud=null,saveTimer=null,writing=false,dirty=false,syncState='local';
 function setSync(s){syncState=s;const el=$('#sync');if(el)el.textContent=s==='ok'?'Tiến độ được lưu theo tài khoản của bạn':s==='err'?'Chưa lưu được lên tài khoản, đang giữ trên trình duyệt này':'Tiến độ đang lưu trên trình duyệt này'}
 function save(){S.t=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(push,4000)}
 async function push(){if(!cloud||writing||!dirty)return;writing=true;dirty=false;try{await cloud.set({json:JSON.stringify(S),t:S.t});setSync('ok')}catch(e){setSync('err')}writing=false;if(dirty){clearTimeout(saveTimer);saveTimer=setTimeout(push,4000)}}
-async function initCloud(){try{if(!window.claude||!claude.use)return;const [db,user]=await Promise.all([claude.use('db'),claude.use('user')]);if(!db||!user)return;const id=await user.id();if(!id)return;cloud=db.doc('data/users/'+id+'/progress');const snap=await cloud.get();if(snap.exists){const d=snap.data();if(d&&d.json&&d.t>(S.t||0)){S=Object.assign(defaults(),JSON.parse(d.json));try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(!sub)render()}}setSync('ok');if(dirty||!snap.exists&&S.t)push()}catch(e){}}
+async function initCloud(){try{if(!window.claude||!claude.use)return;const [db,user]=await Promise.all([claude.use('db'),claude.use('user')]);if(!db||!user)return;const id=await user.id();if(!id)return;cloud=db.doc('data/users/'+id+'/progress');const snap=await cloud.get();if(snap.exists){const d=snap.data();if(d&&d.json&&d.t>(S.t||0)){S=normalize(JSON.parse(d.json));try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(!sub)render()}}setSync('ok');if(dirty||!snap.exists&&S.t)push()}catch(e){}}
 
 /* ===== Giọng đọc ===== */
 const TTS={cl:null,tok:0};
@@ -52,6 +54,29 @@ async function speak(lines){const was=stopSpeak();const my=TTS.tok,mode=ttsMode(
     if(my!==TTS.tok)return true;await sleep(400)}
   return true}
 const noVoiceMsg='Thiết bị này chưa có giọng đọc tiếng Trung. Hãy mở trang bằng Chrome hoặc Edge trên máy tính, hoặc cài giọng 中文（台灣） trong phần cài đặt giọng nói của máy.';
+
+/* ===== File nghe của sách: nằm trên máy người học, web không chứa sẵn ===== */
+const ADB={db:null,keys:new Set(),ready:false};
+function adbOpen(){return new Promise(res=>{try{const r=indexedDB.open('hoc-phon-audio',1);r.onupgradeneeded=()=>r.result.createObjectStore('f');r.onsuccess=()=>{ADB.db=r.result;const q=ADB.db.transaction('f').objectStore('f').getAllKeys();q.onsuccess=()=>{ADB.keys=new Set(q.result);ADB.ready=true;res()};q.onerror=()=>res()};r.onerror=()=>res()}catch(e){res()}})}
+const adbPut=(k,blob)=>new Promise((res,rej)=>{const t=ADB.db.transaction('f','readwrite');t.objectStore('f').put(blob,k);t.oncomplete=()=>{ADB.keys.add(k);res()};t.onerror=()=>rej(t.error)});
+const adbGet=k=>new Promise(res=>{if(!ADB.db)return res(null);const q=ADB.db.transaction('f').objectStore('f').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)});
+const adbClear=()=>new Promise(res=>{const t=ADB.db.transaction('f','readwrite');t.objectStore('f').clear();t.oncomplete=()=>{ADB.keys=new Set();res()}});
+/* Chỉ giữ track bài khoá của sách giáo khoa và track nghe hiểu của sách bài tập */
+function audKey(name){let m;if((m=/B(\d)-L(\d\d)-1-Text\.mp3$/i.exec(name)))return `B${m[1]}-L${m[2]}-T`;if((m=/B2-L(\d\d)-6-Listen[^/]*\.mp3$/i.exec(name)))return `W2-L${m[1]}`;if((m=/B3-L(\d\d)-(\d)-workbook[^/]*\.mp3$/i.exec(name)))return `W3-L${m[1]}-${m[2]}`;return null}
+async function audImport(files,onMsg){let n=0;
+  for(const f of files){
+    if(/\.mp3$/i.test(f.name)){const k=audKey(f.name);if(k){await adbPut(k,f.slice(0,f.size,'audio/mpeg'));n++;onMsg(`Đã nạp ${n} file…`)}continue}
+    if(!/\.zip$/i.test(f.name))continue;
+    await new Promise((res,rej)=>{const jobs=[];const uz=new fflate.Unzip();uz.register(fflate.UnzipInflate);
+      uz.onfile=e=>{const k=audKey(e.name);if(!k)return;const parts=[];e.ondata=(err,d,fin)=>{if(err)return rej(err);parts.push(d);if(fin)jobs.push(adbPut(k,new Blob(parts,{type:'audio/mpeg'})).then(()=>{n++;onMsg(`Đã nạp ${n} file…`)}))};e.start()};
+      const rd=f.stream().getReader();(async()=>{try{for(;;){const {done,value}=await rd.read();if(done){uz.push(new Uint8Array(0),true);break}uz.push(value)}await Promise.all(jobs);res()}catch(e){rej(e)}})()})}
+  return n}
+const PL={url:null,end:0};
+async function playTrack(x){const blob=await adbGet(x.src);if(!blob)return false;stopSpeak();const box=$('#player'),au=$('#pl-audio');
+  if(PL.url)URL.revokeObjectURL(PL.url);PL.url=URL.createObjectURL(blob);PL.end=x.t1||0;au.src=PL.url;$('#pl-title').textContent=x.bk;box.hidden=false;
+  au.onloadedmetadata=()=>{au.currentTime=x.t0||0;au.playbackRate=S.rate;au.play().catch(()=>{})};
+  au.ontimeupdate=()=>{if(PL.end&&au.currentTime>=PL.end){au.pause();PL.end=0}};return true}
+function stopTrack(){const au=$('#pl-audio');if(au){au.pause()}const b=$('#player');if(b)b.hidden=true}
 
 /* ===== SRS ===== */
 const IV=[0,1,2,4,8,16,32];
@@ -88,7 +113,9 @@ const ND=DAYS.length;
   const oldA=LISTEN.filter(x=>!x.d&&x.b==='A');oldA.forEach((x,i)=>{x.d=2+Math.floor(i/2);x.t='對話理解'});
   READ.filter(x=>!x.d&&x.b==='A').forEach((x,i)=>{x.d=3+i})})();
 const setItems=(kind,d)=>kind==='l'?LISTEN.filter(x=>x.d===d):[...READ.filter(x=>x.d===d),...GAPS.filter(x=>x.d===d)];
-function setStat(kind,d){const ks=setItems(kind,d).flatMap(x=>(x.qs||[0]).map((_,i)=>x.id+'-'+i+'p'));const done=ks.filter(k=>S.q[k]!=null),ok=done.filter(k=>S.q[k]===0);
+/* Bài dùng file nghe của sách chỉ tính vào mốc hoàn thành khi thiết bị đã có file đó */
+const usable=x=>!x.src||ADB.keys.has(x.src);
+function setStat(kind,d){const ks=setItems(kind,d).filter(usable).flatMap(x=>(x.qs||[0]).map((_,i)=>x.id+'-'+i+'p'));const done=ks.filter(k=>S.q[k]!=null),ok=done.filter(k=>S.q[k]===0);
   return{n:ks.length,done:done.length,ok:ok.length,pass:ks.length>0&&done.length===ks.length&&ok.length>=Math.ceil(ks.length*.8)}}
 const bestMock=()=>S.hist.filter(h=>h.k==='A').reduce((b,h)=>!b||Math.min(h.L,h.R)>Math.min(b.L,b.R)?h:b,null);
 function dayTitle(i){const x=DAYS[i];return x.k==='unit'?UNITS[x.u].t:x.k==='mock'?'Thi thử Band A':x.k==='exam'?`Làm đề mẫu chính thức Band ${x.b}`:`Vòng 2 · kiểm tra lại: ${UNITS[x.u].t}`}
@@ -134,7 +161,10 @@ function vToday(){const i=curIdx(),x=DAYS[i],due=dueWords().length,kn=knownWords
    <div class="tile ${gap>0?'attn':''}"><span class="num">${gap>0?'−'+gap:gap<0?'+'+(-gap):'0'}</span><span class="lab">${gap>0?'ngày chậm so với lịch':gap<0?'ngày nhanh hơn lịch':'đúng lịch'}</span></div>
   </section>
   <section class="card"><h2>Việc của ngày ${i+1}</h2>${taskList(i)}</section>
-  ${x.k==='unit'&&UNITS[x.u].les?`<section class="card"><h2>Học kèm sách</h2><p>Hôm nay đi cùng sách ${zh('來學華語 第一冊')}. Với mỗi bài, hãy mở sách đọc bài khoá và nghe file nghe của sách trước, rồi mới làm phần kiểm tra ở trên. Từ vựng trong mục Từ vựng được xếp theo đúng thứ tự bài 1 đến bài 10.</p></section>`:''}
+  ${x.k==='unit'&&UNITS[x.u].les?`<section class="card"><h2>Học kèm sách</h2><p>Hôm nay đi cùng ${zh(UNITS[x.u].t)}. Từ vựng được xếp theo đúng thứ tự bài 1 đến bài 10 của sách. Phần nghe có các bài "giọng thật" phát thẳng file nghe của sách: bài khoá của từng bài và các track nghe hiểu trong sách bài tập. Nên làm phần nghe trước khi mở sách đọc bài khoá, để đúng là nghe hiểu.</p></section>`:''}
+  <section class="card"><h2>File nghe của sách</h2><p>Các bài nghe có nhãn "giọng thật" dùng file nghe của bộ sách ${zh('來學華語')}. File nằm trên máy của bạn, web không chứa sẵn. Mỗi thiết bị nạp một lần: chọn file zip mình gửi (hoặc các file zip gốc của sách), web chỉ lấy track bài khoá và track nghe hiểu.</p>
+   <p><b>${ADB.keys.size}</b> track đang có trên thiết bị này. <span id="aud-msg" class="muted"></span></p>
+   <div class="row"><label class="btn sm" for="in-aud">Nạp file nghe<input type="file" id="in-aud" accept=".zip,.mp3,audio/mpeg,application/zip" multiple data-c="aud" hidden></label>${ADB.keys.size?'<button class="btn sm ghost" data-a="audclear">Xoá file nghe khỏi máy này</button>':''}</div></section>
   <section class="card"><h2>Mốc thời gian</h2><div class="row">
    <label class="fld" for="in-start">Ngày bắt đầu<input type="date" id="in-start" value="${esc(S.start)}" data-c="start"></label>
    <label class="fld" for="in-exam">Ngày thi (nếu đã đăng ký)<input type="date" id="in-exam" value="${esc(S.exam)}" data-c="exam"></label></div>
@@ -235,9 +265,9 @@ function vSet(){const {kind,d}=sub,st=setStat(kind,d),items=setItems(kind,d),L=k
    <p class="lead">${L?'Bấm Nghe, chọn đáp án rồi mới mở lời thoại. Câu hỏi được đọc sau đoạn hội thoại, giống trong phòng thi.':'Đọc bằng chữ Phồn trước. Chỉ mở bản Giản thể sau khi đã chọn đáp án.'}</p>
    <p>${st.pass?'<span class="chip ok">Hoàn thành</span> ':''}Đã làm ${st.done}/${st.n} câu, đúng ${st.ok}. Cần đúng từ ${Math.ceil(st.n*.8)} câu.</p>
    <div class="row">${st.done>st.ok?`<button class="btn sm" data-a="redo" data-arg="${kind+d}">Làm lại ${st.done-st.ok} câu sai</button>`:''}<button class="btn sm ghost" data-a="close">Quay lại</button></div>${L?voiceBar()+'<p id="tts-msg" class="warn" hidden></p>':''}</header>`;
-  if(L)return head+items.map((x,n)=>{const all=x.qs.every((_,i)=>S.q[x.id+'-'+i+'p']!=null),open=all||ui.shown[x.id];return `<section class="card item"><div class="row between"><h2>${n+1}. ${zh(x.t||(x.qs.length>1?'段落':'對話'))}</h2><button class="btn sm" data-a="play" data-id="${x.id}">Nghe</button></div>
-   ${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,false)).join('')}
-   ${open?`<div class="script">${x.l.map(l=>`<p>${zh(l)}</p>`).join('')}</div>`:`<button class="link" data-a="show" data-id="${x.id}">Xem lời thoại</button>`}</section>`}).join('');
+  if(L)return head+items.map((x,n)=>{const all=x.qs.every((_,i)=>S.q[x.id+'-'+i+'p']!=null),open=all||ui.shown[x.id];return `<section class="card item"><div class="row between"><h2>${n+1}. ${zh(x.t||(x.qs.length>1?'段落':'對話'))}${x.src?' <span class="chip mid">giọng thật</span>':''}</h2><button class="btn sm" data-a="play" data-id="${x.id}">Nghe</button></div>
+   ${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,!!x.src&&!x.sq)).join('')}
+   ${x.src?`<p class="muted small">File nghe thật của sách: ${zh(x.bk)}. ${usable(x)?'Lời thoại xem trong sách.':'Thiết bị này chưa có file nghe, nên bài này chưa tính vào mốc hoàn thành. Nạp file ở trang Hôm nay.'}</p>`:open?`<div class="script">${x.l.map(l=>`<p>${zh(l)}</p>`).join('')}</div>`:`<button class="link" data-a="show" data-id="${x.id}">Xem lời thoại</button>`}</section>`}).join('');
   return head+items.map((x,n)=>x.s?`<section class="card item"><h2>${n+1}. ${zh('選詞填空')}</h2>${qBlock(x.id,0,x.s,x.o,true)}</section>`:`<section class="card item"><h2>${n+1}. ${zh(x.t)}</h2>${passage(x)}${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,true)).join('')}</section>`).join('')}
 
 /* ===== Thi thử Band A ===== */
@@ -323,7 +353,7 @@ function vGuide(){const A=(u,t)=>`<a href="${u}" target="_blank" rel="noopener">
    <tr><td>C</td><td>${zh('對話、段落')}</td><td>${zh('選詞填空、閱讀理解')}</td></tr></tbody></table></div>
    <ul class="notes"><li>Thi một band, kết quả xếp vào một trong hai cấp của band đó. Mục tiêu C1 hoặc C2 nghĩa là đăng ký Band C.</li><li>Ở Việt Nam, bài thi tổ chức trên máy tính và thí sinh được chọn đề chữ Phồn hoặc chữ Giản. Bạn đã chọn Phồn thể, nên khi đăng ký nhớ chọn đúng.</li><li>Ở Đài Loan, bài nghe đọc hiện là dạng thích ứng (CAT): không chọn band, câu sau khó hay dễ tuỳ câu trước.</li><li>Lịch thi và điểm thi tại Việt Nam do Phòng Giáo dục, Văn phòng Kinh tế và Văn hoá Đài Bắc công bố theo từng năm. Đăng ký trực tuyến, chọn khu vực VIET NAM.</li></ul></section>
   <section class="card"><h2>Từ HSK 6 sang TOCFL: khoảng cách nằm ở đâu</h2><ul class="notes"><li><b>Chữ.</b> Khoảng một phần ba số chữ thường dùng có dạng Phồn khác dạng Giản. Mục Chữ Phồn thể gom ${ALLC.length} chữ hay gặp nhất, đủ cho Band A và B. Lên Band C sẽ gặp thêm chữ hiếm, học qua bài đọc.</li><li><b>Từ.</b> HSK 6 cũ khoảng 5.000 từ, Band C cần khoảng 8.000 từ, lại có nhiều từ riêng của Đài Loan. Mục Từ vựng TOCFL chứa toàn bộ ${WORDS.length} từ của bảng từ chính thức bản 2023, chia theo ngày.</li><li><b>Nghe.</b> Giọng, tốc độ và cách dùng từ khác băng HSK. Cần nghe nguồn Đài Loan mỗi ngày.</li><li><b>Thời gian.</b> Hơn hai tháng với 5 đến 6 giờ mỗi ngày là đủ để chắc Band B và có cơ hội thật ở Level 5. Level 6 đòi hỏi vốn đọc rộng, nên coi đó là mục tiêu vươn tới.</li></ul></section>
-  <section class="card"><h2>Nguồn dữ liệu của web</h2><ul class="notes"><li>Bảng từ: bảng từ TOCFL bản 2023 của Ủy ban TOCFL, lấy qua kho ${A('https://github.com/ivankra/tocfl','ivankra/tocfl')}.</li><li>Nghĩa tiếng Việt: từ điển mở ${A('https://github.com/ph0ngp/CVDICT','CVDICT')} của Phong Phan, giấy phép CC BY-SA 4.0, được chọn nghĩa tự động.</li><li>Thứ tự bài của ngày 1: sách ${zh('來學華語 第一冊')} của Ủy ban Sự vụ Cộng đồng người Hoa hải ngoại. Web không chép lại bài khoá của sách.</li></ul></section>
+  <section class="card"><h2>Nguồn dữ liệu của web</h2><ul class="notes"><li>Bảng từ: bảng từ TOCFL bản 2023 của Ủy ban TOCFL, lấy qua kho ${A('https://github.com/ivankra/tocfl','ivankra/tocfl')}.</li><li>Nghĩa tiếng Việt: từ điển mở ${A('https://github.com/ph0ngp/CVDICT','CVDICT')} của Phong Phan, giấy phép CC BY-SA 4.0, được chọn nghĩa tự động.</li><li>Ngày 1 đến 4 đi theo bộ sách ${zh('來學華語')} quyển 1 đến 3 của Ủy ban Sự vụ Cộng đồng người Hoa hải ngoại. Web không chứa bài khoá hay file nghe của sách: file nghe do bạn tự nạp vào máy, câu hỏi do Claude soạn.</li></ul></section>
   <section class="card"><h2>Nguồn chính thức</h2><ul class="links">
    <li>${A('https://tocfl.edu.tw/','Ủy ban TOCFL (華測會)')}<span>Vào 學習資源 để tải đề mẫu 模擬試題 từng band kèm file nghe, và bảng từ vựng theo cấp.</span></li>
    <li>${A('https://tocfl.edu.tw/OS/','Hệ thống đăng ký thi')}<span>Chọn Test area là VIET NAM để xem các đợt thi trong nước.</span></li>
@@ -362,12 +392,16 @@ const ACT={
  grade(el){const s=sub,c=s.q[s.i],ok=el.dataset.ok==='1';grade(c.id,ok);s.n++;if(ok)s.ok++;else s.q.push(c);s.i++;s.flip=false;render()},
  qpick(el){const s=sub,q=s.qs[s.i];s.pick=el.dataset.o;const ok=s.pick===q.c.bk;if(ok)s.score++;if(S.srs[q.c.id]||!ok)grade(q.c.id,ok);render()},
  qnext(){sub.i++;sub.pick=null;render()},
- close(){if(sub&&sub.type==='mock'){clearInterval(tick);stopSpeak()}sub=null;render();scrollTo(0,0)},
+ pclose(){stopTrack()},
+ async audclear(){await adbClear();render();toast('Đã xoá file nghe của sách khỏi thiết bị này.')},
+ close(){stopTrack();if(sub&&sub.type==='mock'){clearInterval(tick);stopSpeak()}sub=null;render();scrollTo(0,0)},
  async say(el){const ok=await speak([{t:el.dataset.t,s:'n'}]);if(!ok)toast(noVoiceMsg)},
  stop(){stopSpeak()},
  export(){const blob=new Blob([JSON.stringify(S)],{type:'application/json'}),u=URL.createObjectURL(blob),l=document.createElement('a');l.href=u;l.download='hoc-phon-tien-do-'+isoOf(today())+'.json';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);toast('Đã tạo file sao lưu. Xem trong thư mục tải về.')},
  async install(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null;showInstall()},
- async play(el){const x=LISTEN.find(i=>i.id===el.dataset.id),L=parseLines(x.l);x.qs.forEach(([q],i)=>L.push({t:(x.qs.length>1?`第${'一二三'[i]}題，`:'問題：')+q,s:'n'}));
+ async play(el){const x=LISTEN.find(i=>i.id===el.dataset.id);
+   if(x.src){const ok=await playTrack(x);if(!ok)toast('Chưa có file nghe của sách trên thiết bị này. Vào trang Hôm nay, mục File nghe của sách, để nạp.');return}
+   stopTrack();const L=parseLines(x.l);x.qs.forEach(([q],i)=>L.push({t:(x.qs.length>1?`第${'一二三'[i]}題，`:'問題：')+q,s:'n'}));
    const ok=await speak(L);if(!ok){const m=$('#tts-msg');if(m){m.hidden=false;m.textContent=noVoiceMsg}}},
  show(el){ui.shown[el.dataset.id]=1;render()},
  gloss(el){ui.gloss[el.dataset.id]=!ui.gloss[el.dataset.id];render()},
@@ -385,9 +419,11 @@ const ACT={
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,6000)}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!el.dataset.a||el.disabled)return;if(el.tagName==='INPUT')return;const f=ACT[el.dataset.a];if(f)f(el)});
 document.addEventListener('change',e=>{const el=e.target;if(el.dataset.a==='task')return ACT.task(el);const c=el.dataset.c;if(!c||c==='vq')return;
-  if(c==='import'){const f=el.files&&el.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d!=='object'||typeof d.srs!=='object'||!d.start)throw 0;S=Object.assign(defaults(),d);save();render();toast('Đã nhập tiến độ từ file sao lưu.')}).catch(()=>toast('File này không phải file sao lưu của web. Hãy chọn file .json đã tải từ nút Tải file sao lưu.'));return}
+  if(c==='aud'){const fs=[...el.files];if(!fs.length)return;const msg=t=>{const m=$('#aud-msg');if(m)m.textContent=t};msg('Đang đọc file, đừng tắt trang…');
+    audImport(fs,msg).then(n=>{render();toast(n?`Đã nạp ${n} track nghe của sách.`:'Không tìm thấy track phù hợp trong file đã chọn.')}).catch(()=>{render();toast('Không đọc được file này. Hãy thử lại với file zip mình gửi.')});return}
+  if(c==='import'){const f=el.files&&el.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d!=='object'||typeof d.srs!=='object'||!d.start)throw 0;S=normalize(d);save();render();toast('Đã nhập tiến độ từ file sao lưu.')}).catch(()=>toast('File này không phải file sao lưu của web. Hãy chọn file .json đã tải từ nút Tải file sao lưu.'));return}
   if(c==='ex'){const v=el.value===''?null:Math.max(0,Math.min(50,+el.value)),e=S.ex[el.dataset.id]||(S.ex[el.dataset.id]={});if(v==null)delete e[el.dataset.f];else e[el.dataset.f]=v;save();render();return}
-  if(c==='start'){if(el.value){S.start=el.value;ui.day=null}}else if(c==='exam')S.exam=el.value;else if(c==='rate')S.rate=+el.value;else if(c==='voice')S.voice=el.value;save();if(c==='start'||c==='exam')render()});
+  if(c==='start'){if(el.value){S.start=el.value;ui.day=null}}else if(c==='exam')S.exam=el.value;else if(c==='rate'){S.rate=+el.value;const au=$('#pl-audio');if(au)au.playbackRate=S.rate}else if(c==='voice')S.voice=el.value;save();if(c==='start'||c==='exam')render()});
 document.addEventListener('input',e=>{if(e.target.dataset.c==='vq'){ui.vq=e.target.value;const f=ui.vq.trim().toLowerCase();document.querySelectorAll('#vtab tbody tr').forEach(tr=>tr.hidden=!!f&&!tr.textContent.toLowerCase().includes(f))}});
 document.addEventListener('keydown',e=>{if(sub&&sub.type==='wt'&&sub.i<sub.q.length&&!e.target.closest('input,select')){const s=sub;
     if(s.ans==null&&/^[1-4]$/.test(e.key)&&s.opts[+e.key-1]!=null){e.preventDefault();ACT.wpick({dataset:{j:s.opts[+e.key-1]}})}
@@ -402,4 +438,5 @@ function showInstall(){const b=$('#install');if(b)b.hidden=!installEvt}
 addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;showInstall()});
 addEventListener('appinstalled',()=>{installEvt=null;showInstall()});
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
+adbOpen().then(()=>{if(!sub)render()});
 render();initCloud();

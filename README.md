@@ -4,7 +4,7 @@ Web ôn thi TOCFL chữ Phồn thể, đi từ Band A lên B rồi C.
 
 ## Lộ trình hoạt động thế nào
 
-- Mỗi ngày một đơn vị khoảng 300 từ, theo thứ tự của bảng từ TOCFL chính thức từ cấp thấp lên cấp cao. Ngày 1 đi theo 10 bài của sách 來學華語 第一冊.
+- Mỗi ngày một đơn vị khoảng 300 từ, theo thứ tự của bảng từ TOCFL chính thức từ cấp thấp lên cấp cao. Ngày 1 và 2 đi theo từng bài của sách 來學華語 quyển 1 và quyển 2.
 - Mỗi ngày có 4 việc: kiểm tra từ, nghe từ chọn chữ, bài nghe theo dạng đề, bài đọc theo dạng đề.
 - Web tự chấm và tự đánh dấu hoàn thành: từ vựng cần nắm 95%, bài nghe và bài đọc cần đúng 80%.
 - Sau khi đi hết 25 đơn vị là vòng 2: kiểm tra lại từng đơn vị (cần đúng ngay 90%) xen với các buổi làm đề.
@@ -25,6 +25,7 @@ Sau khoảng một phút, web chạy tại `https://whynotme2503.github.io/Phon-
 | `style.css` | Màu sắc, cỡ chữ, bố cục | Khi muốn đổi giao diện |
 | `index.html` | Khung trang, tên web | Hiếm khi |
 | `t2s.js` | Bảng chữ Phồn → Giản, tạo tự động | Không cần sửa |
+| `fflate.js` | Thư viện đọc file zip (fflate, giấy phép MIT) | Không cần sửa |
 | `manifest.webmanifest`, `sw.js`, `icons/` | Phần giúp web cài được như app và mở được khi mất mạng | Không cần sửa |
 
 ## Thêm bài cho một ngày trong `days.js`
@@ -43,6 +44,12 @@ Sau khoảng một phút, web chạy tại `https://whynotme2503.github.io/Phon-
 - **Thêm bài đọc** (`READ`): `{b:"C", t:"tiêu đề", x:"nội dung", qs:[[…]]}`.
 - **Thêm câu điền từ** (`GAPS`): `{b:"B", s:"câu có ＿＿", o:["đúng","sai","sai","sai"]}`.
 
+## File nghe của sách
+
+Các bài nghe có nhãn "giọng thật" dùng file nghe của bộ sách 來學華語 (bài khoá quyển 1 đến 3, phần nghe hiểu của sách bài tập quyển 2 và 3). Kho này không chứa các file đó. Mỗi thiết bị nạp một lần ở trang Hôm nay, mục File nghe của sách: chọn file zip gọn 60 track, hoặc chính các file zip gốc của sách. File được giữ trong trình duyệt của thiết bị đó.
+
+Trong `days.js`, một bài dùng file nghe của sách viết bằng `BK(ngày, 'tên', 'khoá track', 'tên hiện trên trình phát', giây bắt đầu, giây kết thúc, [[câu hỏi, 'đúng|sai|sai']], 1 nếu câu hỏi có sẵn trong file nghe)`.
+
 ## Cài như app
 
 - **Android, máy tính (Chrome, Edge):** mở web, bấm nút **Cài app vào máy** ở thanh bên, hoặc vào menu trình duyệt chọn *Cài đặt ứng dụng*.
@@ -60,4 +67,4 @@ App tự lấy bản mới mỗi khi mở lúc có mạng. Mất mạng thì dù
 
 - Bảng từ TOCFL bản 2023 của Ủy ban TOCFL (華測會), lấy qua kho [ivankra/tocfl](https://github.com/ivankra/tocfl).
 - Nghĩa tiếng Việt từ [CVDICT](https://github.com/ph0ngp/CVDICT) của Phong Phan, giấy phép [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Nghĩa được chọn tự động và rút gọn; phần dữ liệu này trong `words.js` cũng theo giấy phép CC BY-SA 4.0.
-- Thứ tự bài của ngày 1 theo sách 來學華語 第一冊 (Ủy ban Sự vụ Cộng đồng người Hoa hải ngoại). Web không chép lại bài khoá của sách.
+- Ngày 1 đến 4 đi theo bộ sách 來學華語 quyển 1 đến 3 (Ủy ban Sự vụ Cộng đồng người Hoa hải ngoại). Web không chép lại bài khoá và không chứa file nghe của sách.
