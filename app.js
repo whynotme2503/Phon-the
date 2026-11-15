@@ -21,7 +21,7 @@ LISTEN.forEach((x,i)=>x.id='l'+i);READ.forEach((x,i)=>x.id='r'+i);GAPS.forEach((
 
 /* ===== Trạng thái, lưu trữ ===== */
 const KEY='tocfl-on-thi-v1';
-const defaults=()=>({start:isoOf(today()),exam:'',done:{},srs:{},q:{},hist:[],voice:'auto',rate:1,t:0});
+const defaults=()=>({start:isoOf(today()),exam:'',done:{},srs:{},w:{},rt:{},ex:{},dr:{},q:{},hist:[],voice:'auto',rate:1,t:0});
 let S=defaults();
 try{const raw=localStorage.getItem(KEY);if(raw)S=Object.assign(defaults(),JSON.parse(raw))}catch(e){}
 let cloud=null,saveTimer=null,writing=false,dirty=false,syncState='local';
@@ -32,6 +32,8 @@ async function initCloud(){try{if(!window.claude||!claude.use)return;const [db,u
 
 /* ===== Giọng đọc ===== */
 const TTS={cl:null,tok:0};
+/* Giọng của iPhone bị méo khi đổi cao độ, nên trên iOS giữ nguyên cao độ */
+const IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 function voices(){try{return speechSynthesis.getVoices()}catch(e){return[]}}
 const twVoice=()=>voices().find(v=>/zh[-_](TW|Hant)/i.test(v.lang))||null;
 const zhVoice=()=>voices().find(v=>/^zh/i.test(v.lang))||null;
@@ -46,7 +48,7 @@ async function speak(lines){const was=stopSpeak();const my=TTS.tok,mode=ttsMode(
   if(was)await sleep(250);
   try{speechSynthesis.resume()}catch(e){}
   for(const l of lines){for(const part of l.t.match(/[^。！？；]+[。！？；]?/g)||[l.t]){if(my!==TTS.tok)return true;
-    await new Promise(res=>{const u=new SpeechSynthesisUtterance(part);u.lang=v?v.lang:'zh-TW';if(v)u.voice=v;u.volume=1;u.rate=S.rate;u.pitch=l.s==='f'?1.2:l.s==='m'?.8:1;u.onend=res;u.onerror=res;speechSynthesis.speak(u)})}
+    await new Promise(res=>{const u=new SpeechSynthesisUtterance(part);u.lang=v?v.lang:'zh-TW';if(v)u.voice=v;u.volume=1;u.rate=S.rate;u.pitch=IOS?1:l.s==='f'?1.2:l.s==='m'?.8:1;u.onend=res;u.onerror=res;speechSynthesis.speak(u)})}
     if(my!==TTS.tok)return true;await sleep(400)}
   return true}
 const noVoiceMsg='Thiết bị này chưa có giọng đọc tiếng Trung. Hãy mở trang bằng Chrome hoặc Edge trên máy tính, hoặc cài giọng 中文（台灣） trong phần cài đặt giọng nói của máy.';
@@ -61,89 +63,126 @@ const dueCards=()=>ALLCARDS().filter(c=>isDue(c.id));
 const pct=(a,b)=>b?Math.round(a/b*100):0;
 const bar=(a,b)=>`<div class="bar" role="img" aria-label="${a} trên ${b}"><i style="width:${pct(a,b)}%"></i></div>`;
 
-/* ===== Lộ trình 70 ngày ===== */
-const PH=[
- {n:'Giai đoạn 1',t:'Chuyển sang chữ Phồn và Band A',a:1,b:10,goal:'Đọc trôi chữ Phồn thể ở mức cơ bản, quen giọng Đài Loan, qua bài thi thử Band A.'},
- {n:'Giai đoạn 2',t:'Band B (Level 3–4)',a:11,b:30,goal:'Nghe hội thoại và thông báo tốc độ thường, đọc bài 300–500 chữ, vốn từ khoảng 5.000 từ theo chuẩn Đài Loan.'},
- {n:'Giai đoạn 3',t:'Band C (Level 5–6)',a:31,b:63,goal:'Xã luận, tin kinh tế xã hội, thành ngữ và văn viết. Đây là giai đoạn dài nhất vì khoảng cách từ 5.000 lên 8.000 từ nằm ở đây.'},
- {n:'Giai đoạn 4',t:'Tổng ôn và làm đề',a:64,b:70,goal:'Làm đề đúng giờ, soát lỗi, giữ nhịp trước ngày thi.'}];
-const TOPB=['交通與旅遊','購物與消費','工作與職場','健康與醫療','教育與校園','居住與租屋','飲食文化','科技與網路','環境與氣候','銀行、郵局與公共服務','休閒與運動','人際關係','媒體與廣告','節慶與習俗','社區與公共事務','天氣與自然','家庭與世代','藝術與娛樂','求職與面試','總複習'];
-const TOPC=['經濟與物價','少子化與高齡社會','教育改革','能源與環保','科技倫理與人工智慧','醫療與公共衛生','都市發展與居住正義','媒體識讀','勞動與職場','文化資產保存','地方創生','國際貿易','法律與人權','心理與行為科學','企業經營','農業與糧食','交通政策','語言與認同','藝術評論','科學新知','災害防救'];
-const phaseOf=d=>PH.find(p=>d>=p.a&&d<=p.b)||PH[3];
-function tasksFor(d){const T=(x,m,go)=>({x,m,go});
-  if(d<=10){const deck=DECKS[d-1];
-    if(d===10)return[T('Ôn toàn bộ thẻ đến hạn',45,'chu-phon'),T('Làm bài thi thử Band A đủ 2 phần, không dừng giữa chừng',120,'thi-thu'),T('Xem lại từng câu sai, ghi chữ chưa đọc được vào sổ',60,'thi-thu'),T('Đọc phần cấu trúc đề Band B để chuẩn bị giai đoạn 2',20,'cam-nang')];
-    return[T(deck?`Học bộ thẻ mới: ${deck.name} (${deck.cards.length} chữ), sau đó làm trắc nghiệm đến khi đúng từ 90%`:'Học lại các chữ còn sai nhiều',90,'chu-phon'),
-      T('Ôn thẻ đến hạn',30,'chu-phon'),
-      T(d<=5?'Một Giản, nhiều Phồn: học 12 mục':'Từ dùng khác ở Đài Loan: học 20 từ, đọc bảng phát âm',45,d<=5?'chu-phon':'tu-vung'),
-      T('Nghe Band A: làm bài trong mục Luyện nghe, rồi nghe lại và nhại theo từng câu',60,'nghe'),
-      T('Đọc Band A: bài trong mục Luyện đọc và một bài báo thiếu nhi 國語日報',50,'doc'),
-      T('Gõ lại 15 câu vừa đọc bằng bộ gõ Phồn thể (Pinyin đầu ra 繁體 hoặc 注音)',30,'')]}
-  if(d<=30){const tp=TOPB[(d-11)%TOPB.length];
-    if(d===20||d===30)return[T('Ôn thẻ đến hạn',30,'chu-phon'),T(`Làm một đề mẫu Band B chính thức (模擬試題) đủ 100 câu, bấm giờ 120 phút`,120,'cam-nang'),T('Soát lỗi: phân loại sai do chữ, do từ hay do nghe không kịp',60,''),T('Học lại nhóm từ gây lỗi nhiều nhất',45,'tu-vung')];
-    return[T('Ôn thẻ đến hạn',30,'chu-phon'),
-      T(`Từ vựng 進階級 và 高階級 theo chủ đề hôm nay: ${tp}. Lướt danh sách chính thức, chỉ ghi từ lạ và từ có chữ Phồn chưa quen (khoảng 60–80 từ)`,90,'cam-nang'),
-      T('Nghe Band B: bài trong web, sau đó 20 phút tin tức hoặc podcast Đài Loan cùng chủ đề',75,'nghe'),
-      T('Đọc Band B: một bài trong web và hai bài báo ngắn, tóm tắt mỗi bài bằng 2 câu',75,'doc'),
-      T('Chọn từ điền chỗ trống Band B, đọc to câu đúng',20,'doc'),
-      T('Ghi sổ lỗi trong ngày',20,'')]}
-  if(d<=63){const tp=TOPC[(d-31)%TOPC.length];
-    if(d===45||d===55||d===63)return[T('Ôn thẻ đến hạn',30,'chu-phon'),T('Làm một đề mẫu Band C chính thức đủ 100 câu, bấm giờ 120 phút',120,'cam-nang'),T('Soát lỗi và nghe lại các đoạn sai mà không nhìn chữ',75,''),T('Học lại thành ngữ và từ văn viết đã gặp trong đề',45,'')];
-    return[T('Ôn thẻ đến hạn',30,'chu-phon'),
-      T(`Từ vựng 流利級 theo chủ đề: ${tp}. Khoảng 90–100 từ mỗi ngày, ưu tiên thành ngữ và từ văn viết (書面語)`,90,'cam-nang'),
-      T('Đọc sâu: hai bài xã luận hoặc phân tích dài, gạch chân liên từ và câu nêu quan điểm của tác giả',110,'doc'),
-      T('Nghe: 30 phút tin tức hoặc phỏng vấn, ghi 5 ý chính bằng chữ Phồn, sau đó làm bài Band C trong web',80,'nghe'),
-      T('Chọn từ điền chỗ trống Band C',20,'doc'),
-      T('Ghi sổ lỗi trong ngày',20,'')]}
-  if(d===69)return[T('Ôn nhẹ: thẻ đến hạn và sổ lỗi',60,'chu-phon'),T('Nghe 30 phút để giữ tai, ngủ sớm',30,'nghe'),T('Kiểm tra giấy tờ, giờ thi, đường đi',15,'cam-nang')];
-  if(d>=70)return[T('Ngày thi. Đọc lướt sổ lỗi 15 phút rồi thôi',15,'')];
-  return[T('Ôn thẻ đến hạn',30,'chu-phon'),T(`Làm một đề đủ giờ: ${d%2?'phần đọc 50 câu trong 60 phút':'phần nghe 50 câu'}`,70,'cam-nang'),T('Soát lỗi kỹ, viết lại lý do sai của từng câu',90,''),T('Đọc lại 3 bài Band C đã làm, lần này không tra từ',60,'doc'),T('Nghe lại các đoạn từng sai',45,'nghe')]}
-const curDay=()=>today()-dayOf(S.start)+1;
+/* ===== Từ vựng theo đơn vị (khoảng 300 từ mỗi ngày) ===== */
+/* S.w[i] = [hộp, ngày đến hạn]. Đúng ngay lần đầu vào hộp 3, sai về hộp 0. "Đã nắm" là hộp từ 1 trở lên. */
+const unitOf=i=>UNITS.findIndex(u=>i>=u.a&&i<u.z);
+function unitStat(u){let k=0,t=0;for(let i=u.a;i<u.z;i++){const r=S.w[i];if(r){t++;if(r[0]>=1)k++}}return{n:u.z-u.a,known:k,tested:t,need:Math.ceil((u.z-u.a)*.95)}}
+const unitDone=u=>{const s=unitStat(u);return s.known>=s.need};
+function dueWords(){const a=[],t=today();for(const k in S.w)if(S.w[k][1]<=t)a.push(+k);return a}
+const knownWords=()=>{let n=0;for(const k in S.w)if(S.w[k][0]>=1)n++;return n};
+function gradeW(i,ok){const r=S.w[i];const b=!r?(ok?3:0):ok?Math.min(r[0]+1,6):0;S.w[i]=[b,today()+IV[b]];save()}
+const showW=w=>w[0].replace(/\//g,' / ');
 
+/* ===== Lộ trình: mỗi ngày một đơn vị, xong hay chưa do web tự chấm ===== */
+const DAYS=[];
+(()=>{const last={};UNITS.forEach((u,i)=>last[u.b]=i);
+  UNITS.forEach((u,i)=>{DAYS.push({k:'unit',u:i,b:u.b});
+    if(i===last.A)DAYS.push({k:'mock',b:'A'});
+    if(i===last.B)DAYS.push({k:'exam',b:'B',id:'B1'});
+    if(i===last.C)DAYS.push({k:'exam',b:'C',id:'C1'})});
+  UNITS.forEach((u,i)=>{DAYS.push({k:'retest',u:i,b:u.b});if((i+1)%8===0||i===UNITS.length-1)DAYS.push({k:'exam',b:'C',id:'C'+(2+Math.floor(i/8))})})})();
+const ND=DAYS.length;
+/* Gắn bài nghe, bài đọc cũ (theo band) vào các ngày học từ của band đó */
+(()=>{['B','C'].forEach(b=>{const ds=DAYS.map((x,i)=>x.k==='unit'&&x.b===b?i+1:0).filter(Boolean);let n=0;
+    [LISTEN,READ,GAPS].forEach(arr=>arr.filter(x=>!x.d&&x.b===b).forEach(x=>{x.d=ds[n++%ds.length]}))});
+  const oldA=LISTEN.filter(x=>!x.d&&x.b==='A');oldA.forEach((x,i)=>{x.d=2+Math.floor(i/2);x.t='對話理解'});
+  READ.filter(x=>!x.d&&x.b==='A').forEach((x,i)=>{x.d=3+i})})();
+const setItems=(kind,d)=>kind==='l'?LISTEN.filter(x=>x.d===d):[...READ.filter(x=>x.d===d),...GAPS.filter(x=>x.d===d)];
+function setStat(kind,d){const ks=setItems(kind,d).flatMap(x=>(x.qs||[0]).map((_,i)=>x.id+'-'+i+'p'));const done=ks.filter(k=>S.q[k]!=null),ok=done.filter(k=>S.q[k]===0);
+  return{n:ks.length,done:done.length,ok:ok.length,pass:ks.length>0&&done.length===ks.length&&ok.length>=Math.ceil(ks.length*.8)}}
+const bestMock=()=>S.hist.filter(h=>h.k==='A').reduce((b,h)=>!b||Math.min(h.L,h.R)>Math.min(b.L,b.R)?h:b,null);
+function dayTitle(i){const x=DAYS[i];return x.k==='unit'?UNITS[x.u].t:x.k==='mock'?'Thi thử Band A':x.k==='exam'?`Làm đề mẫu chính thức Band ${x.b}`:`Vòng 2 · kiểm tra lại: ${UNITS[x.u].t}`}
+function dayTasks(i){const x=DAYS[i],d=i+1,T=[];
+  if(x.k==='unit'){const u=UNITS[x.u],s=unitStat(u);
+    T.push({x:`Từ vựng: kiểm tra ${s.n} từ`,done:s.known>=s.need,p:`${s.known}/${s.n} từ đã nắm, cần ${s.need}`,pc:pct(s.known,s.need),a:'wt',arg:x.u,btn:s.tested?'Làm tiếp':'Bắt đầu'});
+    const dr=S.dr['d'+d];T.push({x:'Nghe từ, chọn chữ: 30 từ của hôm nay',done:dr>=80,p:dr==null?'Chưa làm, cần đúng từ 80%':`Lần gần nhất đúng ${dr}%, cần 80%`,pc:dr||0,a:'drill',arg:d,btn:dr==null?'Bắt đầu':'Làm lại'});
+    [['l','Nghe theo dạng đề'],['r','Đọc theo dạng đề']].forEach(([k,name])=>{const st=setStat(k,d);if(st.n)T.push({x:`${name}: ${st.n} câu`,done:st.pass,p:`Đã làm ${st.done}/${st.n}, đúng ${st.ok}, cần đúng ${Math.ceil(st.n*.8)}`,pc:pct(st.ok,Math.ceil(st.n*.8)),a:'set',arg:k+d,btn:st.done?'Làm tiếp':'Bắt đầu'})})}
+  else if(x.k==='mock'){const b=bestMock();T.push({x:'Thi thử Band A: 50 câu nghe, 50 câu đọc',done:!!b&&b.L>=38&&b.R>=38,p:b?`Kết quả tốt nhất: nghe ${b.L}/50, đọc ${b.R}/50. Cần mỗi phần từ 38`:'Chưa thi. Cần mỗi phần từ 38/50',pc:b?pct(Math.min(b.L,b.R),38):0,a:'mock',btn:b?'Thi lại':'Vào thi'})}
+  else if(x.k==='exam'){const e=S.ex[x.id]||{};const ok=e.L!=null&&e.R!=null;T.push({x:`Làm đề mẫu Band ${x.b} trên trang TOCFL, rồi nhập số câu đúng`,done:ok&&e.L>=35&&e.R>=35,p:ok?`Nghe ${e.L}/50, đọc ${e.R}/50. Cần mỗi phần từ 35`:'Chưa nhập điểm. Cần mỗi phần từ 35/50',pc:ok?pct(Math.min(e.L,e.R),35):0,exam:x.id})}
+  else{const r=S.rt[x.u];T.push({x:`Kiểm tra lại cả ${UNITS[x.u].z-UNITS[x.u].a} từ, không học trước`,done:r>=90,p:r==null?'Chưa làm. Cần đúng ngay lần đầu từ 90%':`Lần gần nhất đúng ${r}%, cần 90%`,pc:r||0,a:'retest',arg:x.u,btn:r==null?'Bắt đầu':'Làm lại'})}
+  return T}
+const dayDone=i=>dayTasks(i).every(t=>t.done);
+const dayStarted=i=>dayTasks(i).some(t=>t.pc>0);
+const curIdx=()=>{for(let i=0;i<ND;i++)if(!dayDone(i))return i;return ND-1};
+const calDay=()=>today()-dayOf(S.start)+1;
 /* ===== Điều hướng ===== */
-const NAV=[['hom-nay','Hôm nay'],['lo-trinh','Lộ trình'],['chu-phon','Chữ Phồn thể'],['tu-vung','Từ vựng Đài Loan'],['nghe','Luyện nghe'],['doc','Luyện đọc'],['thi-thu','Thi thử'],['cam-nang','Cẩm nang kỳ thi']];
+const NAV=[['hom-nay','Hôm nay'],['lo-trinh','Lộ trình'],['tu-vung','Từ vựng TOCFL'],['chu-phon','Chữ Phồn thể'],['dai-loan','Từ riêng Đài Loan'],['thi-thu','Thi thử'],['cam-nang','Cẩm nang kỳ thi']];
 let sub=null;      /* phiên học thẻ, trắc nghiệm hoặc bài thi đang mở */
-let ui={band:'A',day:null,gloss:{},shown:{},vq:''};
+let ui={day:null,unit:null,gloss:{},shown:{},vq:''};
 const ORD={};const ord=(k,n)=>ORD[k]||(ORD[k]=shuffle([...Array(n).keys()]));
 const route=()=>{const h=location.hash.slice(1);return NAV.some(n=>n[0]===h)?h:'hom-nay'};
 function render(){const r=route();
-  $('#nav').innerHTML=NAV.map(([h,t])=>`<a href="#${h}" ${h===r?'aria-current="page"':''}>${t}${h==='chu-phon'&&dueCards().length?`<b>${dueCards().length}</b>`:''}</a>`).join('');
+  const dw=dueWords().length,dc=dueCards().length;
+  $('#nav').innerHTML=NAV.map(([h,t])=>{const n=h==='tu-vung'?dw:h==='chu-phon'?dc:0;return `<a href="#${h}" ${h===r?'aria-current="page"':''}>${t}${n?`<b>${n}</b>`:''}</a>`}).join('');
   const m=$('#main');
-  m.innerHTML=sub?(sub.type==='mock'?vMock():sub.type==='quiz'?vQuiz():vStudy()):({'hom-nay':vToday,'lo-trinh':vPlan,'chu-phon':vChars,'tu-vung':vVocab,'nghe':vListen,'doc':vRead,'thi-thu':vMockHome,'cam-nang':vGuide})[r]();
+  m.innerHTML=sub?({mock:vMock,quiz:vQuiz,study:vStudy,wt:vWT,set:vSet})[sub.type]():({'hom-nay':vToday,'lo-trinh':vPlan,'tu-vung':vUnits,'chu-phon':vChars,'dai-loan':vVocab,'thi-thu':vMockHome,'cam-nang':vGuide})[r]();
   setSync(syncState)}
-addEventListener('hashchange',()=>{if(sub&&sub.type==='mock'&&sub.stage!=='done'&&sub.stage!=='intro'){/* giữ bài thi */}else sub=null;stopSpeak();render();scrollTo(0,0)});
+addEventListener('hashchange',()=>{if(sub&&sub.type==='mock'&&sub.stage!=='done'&&sub.stage!=='intro'){/* giữ bài thi */}else sub=null;ui.unit=null;stopSpeak();render();scrollTo(0,0)});
 
 /* ===== Hôm nay ===== */
-function taskList(d){const ts=tasksFor(d),done=S.done['d'+d]||[];
-  return `<ul class="tasks">${ts.map((t,i)=>`<li class="${done.includes(i)?'done':''}"><label><input type="checkbox" id="t-${d}-${i}" data-a="task" data-d="${d}" data-i="${i}" ${done.includes(i)?'checked':''}><span>${esc(t.x).replace(/([㐀-鿿（）、，]+)/g,'<span lang="zh-Hant" class="zh">$1</span>')}</span></label><span class="min">${t.m}′</span>${t.go?`<a class="go" href="#${t.go}">Mở</a>`:''}</li>`).join('')}</ul>
-  <p class="muted small">Tổng ${Math.round(ts.reduce((s,t)=>s+t.m,0)/6)/10} giờ. Xong ${done.length}/${ts.length} việc.</p>`}
-function vToday(){const d=curDay(),dd=Math.min(Math.max(d,1),70),p=phaseOf(dd),due=dueCards().length,known=ALLC.filter(c=>isKnown(c.id)).length;
-  const left=S.exam?dayOf(S.exam)-today():null,last=S.hist.filter(h=>h.k==='A').slice(-1)[0];
-  return `<header class="head"><p class="eyebrow">${p.n} · ${esc(p.t)}</p><h1>${d<1?'Chưa đến ngày bắt đầu':d>70?'Đã hết 70 ngày lộ trình':`Ngày ${d} trên 70`}</h1><p class="lead">${esc(p.goal)}</p>${bar(dd,70)}</header>
+const chip=t=>t.done?'<span class="chip ok">Hoàn thành</span>':t.pc>0?`<span class="chip mid">Đang làm ${Math.min(99,t.pc)}%</span>`:'<span class="chip">Chưa làm</span>';
+function taskList(i){return `<ul class="tasks">${dayTasks(i).map(t=>`<li class="${t.done?'done':''}"><div class="tk"><b>${esc(t.x)}</b><span class="muted small">${esc(t.p)}</span>${bar(Math.min(t.pc,100),100)}
+   ${t.exam?`<div class="row"><label class="fld inl" for="ex-${t.exam}-L">Nghe<input type="number" min="0" max="50" id="ex-${t.exam}-L" data-c="ex" data-id="${t.exam}" data-f="L" value="${(S.ex[t.exam]||{}).L??''}"></label><label class="fld inl" for="ex-${t.exam}-R">Đọc<input type="number" min="0" max="50" id="ex-${t.exam}-R" data-c="ex" data-id="${t.exam}" data-f="R" value="${(S.ex[t.exam]||{}).R??''}"></label><a href="#cam-nang">Lấy đề ở đâu</a></div>`:''}</div>
+   <div class="tkr">${chip(t)}${t.a?`<button class="btn sm ${t.done?'ghost':''}" data-a="${t.a}" data-arg="${t.arg??''}">${t.done?'Xem lại':t.btn}</button>`:''}</div></li>`).join('')}</ul>`}
+function vToday(){const i=curIdx(),x=DAYS[i],due=dueWords().length,kn=knownWords(),cal=calDay(),doneDays=DAYS.filter((_,k)=>dayDone(k)).length,gap=cal-(i+1);
+  return `<header class="head"><p class="eyebrow">Chặng ${x.k==='retest'?'vòng 2':'Band '+x.b} · ngày ${i+1} trên ${ND}</p><h1>${zh(dayTitle(i))}</h1>
+   <p class="lead">Web tự đánh dấu hoàn thành khi bạn đạt mốc của từng việc. Xong hết các việc của ngày thì ngày kế tiếp tự mở.</p>${bar(doneDays,ND)}</header>
   <section class="tiles">
-   <div class="tile ${due?'attn':''}"><span class="num">${due}</span><span class="lab">thẻ đến hạn ôn</span>${due?'<button class="btn sm" data-a="review">Ôn ngay</button>':''}</div>
-   <div class="tile"><span class="num">${known}<small>/${ALLC.length}</small></span><span class="lab">chữ Phồn đã thuộc</span></div>
-   <div class="tile"><span class="num">${last?last.L+last.R:'—'}<small>${last?'/100':''}</small></span><span class="lab">thi thử Band A gần nhất</span></div>
-   <div class="tile"><span class="num">${left===null?'—':left<0?'0':left}</span><span class="lab">${left===null?'chưa đặt ngày thi':'ngày đến kỳ thi'}</span></div>
+   <div class="tile"><span class="num">${kn}<small>/${WORDS.length}</small></span><span class="lab">từ TOCFL đã nắm</span></div>
+   <div class="tile ${due?'attn':''}"><span class="num">${due}</span><span class="lab">từ đến hạn ôn</span>${due?'<button class="btn sm" data-a="wreview">Ôn ngay</button>':''}</div>
+   <div class="tile"><span class="num">${doneDays}<small>/${ND}</small></span><span class="lab">ngày đã hoàn thành</span></div>
+   <div class="tile ${gap>0?'attn':''}"><span class="num">${gap>0?'−'+gap:gap<0?'+'+(-gap):'0'}</span><span class="lab">${gap>0?'ngày chậm so với lịch':gap<0?'ngày nhanh hơn lịch':'đúng lịch'}</span></div>
   </section>
-  <section class="card"><h2>Việc hôm nay</h2>${taskList(dd)}</section>
+  <section class="card"><h2>Việc của ngày ${i+1}</h2>${taskList(i)}</section>
+  ${x.k==='unit'&&UNITS[x.u].les?`<section class="card"><h2>Học kèm sách</h2><p>Hôm nay đi cùng sách ${zh('來學華語 第一冊')}. Với mỗi bài, hãy mở sách đọc bài khoá và nghe file nghe của sách trước, rồi mới làm phần kiểm tra ở trên. Từ vựng trong mục Từ vựng được xếp theo đúng thứ tự bài 1 đến bài 10.</p></section>`:''}
   <section class="card"><h2>Mốc thời gian</h2><div class="row">
    <label class="fld" for="in-start">Ngày bắt đầu<input type="date" id="in-start" value="${esc(S.start)}" data-c="start"></label>
    <label class="fld" for="in-exam">Ngày thi (nếu đã đăng ký)<input type="date" id="in-exam" value="${esc(S.exam)}" data-c="exam"></label></div>
-   <p class="muted small">Lộ trình dài 70 ngày tính từ ngày bắt đầu. Nếu ngày thi sớm hơn, hãy rút bớt giai đoạn 2 trước, giữ nguyên giai đoạn 3.</p></section>
+   <p class="muted small">${S.exam?`Còn ${Math.max(0,dayOf(S.exam)-today())} ngày đến kỳ thi. `:''}Lịch tính mỗi ngày một đơn vị kể từ ngày bắt đầu. Ô "chậm so với lịch" so ngày theo lịch với ngày bạn thật sự đã hoàn thành.</p></section>
   <section class="card"><h2>Sao lưu tiến độ</h2><p>Tiến độ lưu riêng trên từng thiết bị. Tải file sao lưu về rồi nhập ở máy khác để học tiếp, hoặc giữ lại phòng khi xoá dữ liệu trình duyệt.</p>
    <div class="row"><button class="btn sm" data-a="export">Tải file sao lưu</button><label class="btn sm ghost" for="in-import">Nhập file sao lưu<input type="file" id="in-import" accept="application/json,.json" data-c="import" hidden></label></div>
    <p class="muted small">Nhập file sẽ thay toàn bộ tiến độ đang có trên thiết bị này.</p></section>`}
 
 /* ===== Lộ trình ===== */
-function vPlan(){const d=Math.min(Math.max(curDay(),1),70),sel=ui.day||d;
-  return `<header class="head"><h1>Lộ trình 70 ngày</h1><p class="lead">Mỗi ngày 5 đến 6 giờ. Đi lần lượt A, B rồi C, cuối mỗi band có một buổi làm đề đủ giờ.</p></header>
-  ${PH.map(p=>`<section class="card"><p class="eyebrow">${p.n} · ngày ${p.a}–${p.b}</p><h2>${esc(p.t)}</h2><p>${esc(p.goal)}</p>
-   <div class="days">${Array.from({length:p.b-p.a+1},(_,k)=>{const n=p.a+k,dn=(S.done['d'+n]||[]).length,tt=tasksFor(n).length,test=/đề|thi thử/i.test(tasksFor(n)[1]?.x||'')&&tasksFor(n).length<=4&&n!==69;
-     return `<button class="day ${n===d?'now':''} ${n===sel?'sel':''} ${dn>=tt?'full':dn?'part':''} ${test?'test':''}" data-a="day" data-d="${n}" aria-label="Ngày ${n}${test?', ngày làm đề':''}">${n}</button>`}).join('')}</div>
-   ${sel>=p.a&&sel<=p.b?`<div class="daybox"><h3>Ngày ${sel}${sel===d?' (hôm nay)':''}</h3>${taskList(sel)}</div>`:''}</section>`).join('')}
-  <p class="muted small">Ô viền đậm là ngày làm đề. Ô tô màu là ngày đã xong hết việc.</p>`}
+function vPlan(){const cur=curIdx(),sel=ui.day??cur;
+  const groups=[['Chặng A · Band A','Sách 來學華語 第一冊, rồi phần còn lại của bảng từ 入門級 và 基礎級. Kết thúc bằng bài thi thử Band A.',i=>DAYS[i].k!=='retest'&&DAYS[i].b==='A'&&i<UNITS.length+3],
+    ['Chặng B · Band B','Bảng từ 進階級 và 高階級, mỗi ngày khoảng 290 từ. Kết thúc bằng đề mẫu chính thức Band B.',i=>DAYS[i].k!=='retest'&&DAYS[i].b==='B'],
+    ['Chặng C · Band C','Bảng từ 流利級, mỗi ngày khoảng 310 từ. Kết thúc bằng đề mẫu chính thức Band C.',i=>DAYS[i].k!=='retest'&&DAYS[i].b==='C'&&i<UNITS.length+3],
+    ['Vòng 2 · kiểm tra lại và làm đề','Mỗi ngày kiểm tra lại một đơn vị từ mà không học trước, xen các buổi làm đề Band C.',i=>i>=UNITS.length+3]];
+  return `<header class="head"><h1>Lộ trình ${ND} ngày</h1><p class="lead">Quy tắc: mỗi ngày một đơn vị khoảng 300 từ, đi theo thứ tự của bảng từ TOCFL chính thức từ cấp thấp lên cấp cao. Một ngày chỉ tính là xong khi bạn qua được bài kiểm tra từ, bài nghe và bài đọc của ngày đó.</p></header>
+  ${groups.map(([t,note,f])=>{const idx=DAYS.map((_,i)=>i).filter(f);if(!idx.length)return'';return `<section class="card"><p class="eyebrow">Ngày ${idx[0]+1}–${idx[idx.length-1]+1}</p><h2>${zh(t)}</h2><p>${zh(note)}</p>
+   <div class="days">${idx.map(i=>`<button class="day ${i===cur?'now':''} ${i===sel?'sel':''} ${dayDone(i)?'full':dayStarted(i)?'part':''} ${DAYS[i].k==='mock'||DAYS[i].k==='exam'?'test':''}" data-a="day" data-d="${i}" aria-label="Ngày ${i+1}">${i+1}</button>`).join('')}</div>
+   ${idx.includes(sel)?`<div class="daybox"><h3>Ngày ${sel+1}${sel===cur?' (đang học)':''} · ${zh(dayTitle(sel))}</h3>${taskList(sel)}</div>`:''}</section>`}).join('')}
+  <p class="muted small">Ô tô đậm là ngày đã xong, ô tô nhạt là ngày đang làm dở, ô viền đậm là ngày làm đề. Bạn có thể bấm vào ngày bất kỳ để làm trước.</p>`}
 
+/* ===== Từ vựng ===== */
+function vUnits(){if(ui.unit!=null)return vUnitList(ui.unit);const due=dueWords().length;
+  return `<header class="head"><h1>Từ vựng TOCFL</h1><p class="lead">${WORDS.length} từ của bảng từ chính thức, chia thành ${UNITS.length} đơn vị. Bài kiểm tra cho bạn xem từ bằng chữ Phồn và chọn nghĩa. Từ nào đúng ngay lần đầu được tính là đã nắm, từ nào sai sẽ quay lại cho đến khi đúng.</p>
+   ${due?`<button class="btn" data-a="wreview">Ôn ${due} từ đến hạn</button>`:''}</header>
+  <section class="decks">${UNITS.map((u,i)=>{const s=unitStat(u),day=DAYS.findIndex(x=>x.k==='unit'&&x.u===i)+1;return `<article class="card deck"><p class="eyebrow">Ngày ${day} · Band ${u.b}</p><h2>${zh(u.t)}</h2>${bar(s.known,s.n)}<p class="small">${s.known}/${s.n} từ đã nắm${s.tested-s.known?`, ${s.tested-s.known} từ còn yếu`:''} ${s.known>=s.need?'<span class="chip ok">Hoàn thành</span>':''}</p>
+   <div class="row"><button class="btn sm" data-a="wt" data-arg="${i}">${s.tested?'Kiểm tra tiếp':'Kiểm tra'}</button><button class="btn sm ghost" data-a="ulist" data-arg="${i}">Xem danh sách</button></div></article>`}).join('')}</section>
+  <p class="muted small">Bảng từ: TOCFL bản 2023. Nghĩa tiếng Việt lấy tự động từ từ điển mở CVDICT nên đôi chỗ chưa sát nghĩa dùng trong đề.</p>`}
+function vUnitList(ui_){const u=UNITS[ui_],rows=[];
+  for(let i=u.a;i<u.z;i++){const le=u.les&&u.les.findIndex(r=>r[0]===i-u.a);if(u.les&&le>=0)rows.push(`<tr><th colspan="4">Bài ${le+1}</th></tr>`);const w=WORDS[i],r=S.w[i];
+    rows.push(`<tr><td>${zh(showW(w),'b')}</td><td>${esc(w[2])}</td><td>${esc(w[3])}</td><td>${!r?'':r[0]>=1?'<span class="chip ok">đã nắm</span>':'<span class="chip bad">còn yếu</span>'}</td></tr>`)}
+  return `<header class="head"><p class="eyebrow">Band ${u.b}</p><h1>${zh(u.t)}</h1><div class="row"><button class="btn" data-a="wt" data-arg="${ui_}">Kiểm tra</button><button class="btn ghost" data-a="ulist" data-arg="">Quay lại</button></div></header>
+  <section class="card"><div class="scroll"><table><thead><tr><th>Từ</th><th>Phiên âm</th><th>Nghĩa</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div></section>`}
+/* Phiên kiểm tra từ. mode: unit (học đơn vị), review (ôn đến hạn), retest (vòng 2), drill (nghe từ chọn chữ) */
+function startWT(ids,title,mode,u,extra){if(!ids.length){toast('Không còn từ nào cần làm ở mục này.');return}
+  sub=Object.assign({type:'wt',q:ids.slice(),i:0,title,mode,u,first:{},ok:0,n:0,ans:null,total:ids.length},extra||{});nextW();render();scrollTo(0,0);if(mode==='drill')sayW()}
+function nextW(){const s=sub;s.ans=null;if(s.i>=s.q.length)return;const i=s.q[s.i],w=WORDS[i],pool=UNITS[s.u!=null?s.u:unitOf(i)],f=s.mode==='drill'?0:3,seen=new Set([w[f]]),o=[i];let g=0;
+  while(o.length<4&&g++<300){const j=pool.a+Math.floor(Math.random()*(pool.z-pool.a));if(!seen.has(WORDS[j][f])&&WORDS[j][0]!==w[0]){seen.add(WORDS[j][f]);o.push(j)}}s.opts=shuffle(o)}
+function sayW(){const s=sub;if(s&&s.type==='wt'&&s.i<s.q.length)speak([{t:WORDS[s.q[s.i]][0].split('/')[0].replace(/[（(].*?[)）]/g,''),s:'n'}]).then(ok=>{if(!ok)toast(noVoiceMsg)})}
+function vWT(){const s=sub;
+  if(s.i>=s.q.length){const p=pct(s.ok,s.n);
+    return `<header class="head"><p class="eyebrow">${esc(s.title)}</p><h1>Đúng ngay lần đầu ${s.ok}/${s.n} từ (${p}%)</h1><p class="lead">${s.mode==='drill'?(p>=80?'Đạt mốc 80%. Việc này đã được đánh dấu hoàn thành.':'Chưa tới 80%. Làm lại để hoàn thành việc này.'):s.mode==='retest'?(p>=90?'Đạt mốc 90%. Đơn vị này đã vững.':'Chưa tới 90%. Các từ sai đã vào danh sách ôn, hãy ôn rồi kiểm tra lại.'):'Các từ sai lúc đầu đã được hỏi lại đến khi đúng, và sẽ quay lại vào ngày mai để chắc là bạn nhớ.'}</p><div class="row"><button class="btn" data-a="close">Quay lại</button></div></header>`}
+  const i=s.q[s.i],w=WORDS[i],dr=s.mode==='drill',a=s.ans;
+  return `<div class="study"><p class="eyebrow">${esc(s.title)} · còn ${s.q.length-s.i} từ · đúng lần đầu ${s.ok}/${s.n}</p>
+   <div class="fc static">${dr?(a==null?`<p class="muted">Nghe rồi chọn đúng từ</p><button class="btn" data-a="wsay">Nghe lại</button>`:`<div class="face word" lang="zh-Hant">${esc(showW(w))}</div>`):`<div class="face word" lang="zh-Hant">${esc(showW(w))}</div>`}
+    ${a!=null?`<div class="ans col"><span>${esc(w[2])}${w[1]!==w[0]?` · <span lang="zh-Hans" class="zh muted">${esc(w[1])}</span>`:''}</span><span>${esc(w[3])}</span></div>`:''}</div>
+   <div class="opts ${dr?'four':''}">${s.opts.map((j,n)=>`<button class="opt ${dr?'big wd':''} ${a!=null?(j===i?'right':j===a?'wrong':''):''}" data-a="wpick" data-j="${j}" ${a!=null?'disabled':''} ${dr?'lang="zh-Hant"':''}>${dr?esc(WORDS[j][0].split('/')[0]):`<b>${n+1}</b> ${esc(WORDS[j][3])}`}</button>`).join('')}</div>
+   <div class="row center">${a==null?`<button class="btn ghost" data-a="wpick" data-j="-1">Chưa biết từ này <kbd>0</kbd></button>`:`<button class="btn" data-a="wnext">Từ tiếp <kbd>Enter</kbd></button>`}${dr?'':`<button class="btn ghost sm" data-a="wsay">Nghe đọc</button>`}<button class="btn ghost sm" data-a="close">Tạm dừng</button></div>
+   ${bar(s.i,s.q.length)}</div>`}
 /* ===== Chữ Phồn thể ===== */
 function vChars(){const due=dueCards().length,mk=MULTIC.filter(c=>isKnown(c.id)).length;
   return `<header class="head"><h1>Chữ Phồn thể</h1><p class="lead">${ALLC.length} chữ có dạng khác chữ Giản, chia theo quy tắc bộ thủ rồi theo chủ đề. Mặt trước là chữ Phồn, bạn đọc thầm rồi lật để kiểm tra.</p>
@@ -177,7 +216,7 @@ function vQuiz(){const s=sub;if(s.i>=s.qs.length)return `<header class="head"><h
 /* ===== Từ vựng Đài Loan ===== */
 function vVocab(){const k=VOCABC.filter(c=>isKnown(c.id)).length,f=ui.vq.trim().toLowerCase();
   const rows=VOCABC.filter(c=>!f||(c.f+c.bk+c.vi).toLowerCase().includes(f));
-  return `<header class="head"><h1>Từ vựng Đài Loan</h1><p class="lead">Cùng một nghĩa nhưng Đài Loan dùng từ khác. Đề TOCFL dùng cách nói của Đài Loan, nên các từ này xuất hiện ngay từ Band A.</p>${bar(k,VOCABC.length)}<p class="small">${k}/${VOCABC.length} từ đã thuộc</p>
+  return `<header class="head"><h1>Từ riêng Đài Loan</h1><p class="lead">Cùng một nghĩa nhưng Đài Loan dùng từ khác. Đề TOCFL dùng cách nói của Đài Loan, nên các từ này xuất hiện ngay từ Band A.</p>${bar(k,VOCABC.length)}<p class="small">${k}/${VOCABC.length} từ đã thuộc</p>
    <div class="row"><button class="btn" data-a="study" data-deck="vocab">Học thẻ</button></div></header>
   <section class="card"><h2>Bảng tra</h2><label class="fld" for="vq">Tìm theo chữ hoặc nghĩa<input id="vq" type="search" value="${esc(ui.vq)}" data-c="vq" placeholder="vd: mạng, 捷運"></label>
    <div class="scroll" id="vtab"><table><thead><tr><th>Đài Loan</th><th>Đại lục</th><th>Nghĩa</th></tr></thead><tbody>${rows.map(c=>`<tr><td>${zh(c.f,'b')}</td><td><span lang="zh-Hans" class="zh">${esc(c.bk)}</span></td><td>${esc(c.vi)}</td></tr>`).join('')}</tbody></table></div></section>
@@ -185,25 +224,21 @@ function vVocab(){const k=VOCABC.filter(c=>isKnown(c.id)).length,f=ui.vq.trim().
    <div class="scroll"><table><thead><tr><th>Từ</th><th>Đài Loan</th><th>Đại lục</th><th></th></tr></thead><tbody>${PRONL.map(([w,a,b])=>`<tr><td>${zh(w,'b')}</td><td>${esc(a)}</td><td class="muted">${esc(b)}</td><td><button class="btn ghost sm" data-a="say" data-t="${esc(w)}">Nghe</button></td></tr>`).join('')}</tbody></table></div>
    <p class="muted small">Giọng máy không phải lúc nào cũng đọc đúng âm Đài Loan của từng từ. Hãy lấy phiên âm trong bảng làm chuẩn.</p></section>`}
 
-/* ===== Luyện nghe / đọc ===== */
-const bandTabs=()=>`<div class="tabs" role="tablist">${['A','B','C'].map(b=>`<button role="tab" aria-selected="${ui.band===b}" data-a="band" data-b="${b}">Band ${b}</button>`).join('')}</div>`;
-function voiceBar(){return `<div class="row voice"><label class="fld inl" for="rate">Tốc độ<select id="rate" data-c="rate">${[.7,.85,1,1.15,1.3].map(r=>`<option value="${r}" ${S.rate==r?'selected':''}>${r}×</option>`).join('')}</select></label>
-  <label class="fld inl" for="voice">Giọng đọc<select id="voice" data-c="voice"><option value="auto" ${S.voice==='auto'?'selected':''}>Tự chọn</option><option value="browser" ${S.voice==='browser'?'selected':''}>Giọng của trình duyệt</option><option value="claude" ${S.voice==='claude'?'selected':''}>Giọng Claude</option></select></label><button class="btn ghost sm" data-a="stop">Dừng đọc</button></div>`}
+/* ===== Bài nghe, bài đọc của từng ngày ===== */
+function voiceBar(){return `<div class="row voice"><label class="fld inl" for="rate">Tốc độ<select id="rate" data-c="rate">${[.7,.85,1,1.15,1.3].map(r=>`<option value="${r}" ${S.rate==r?'selected':''}>${r}×</option>`).join('')}</select></label><button class="btn ghost sm" data-a="stop">Dừng đọc</button></div>`}
 function qBlock(id,qi,q,opts,showQ){const key=id+'-'+qi,o=ord(key,opts.length),p=S.q[key+'p'];
-  return `<div class="q" id="q-${key}">${showQ||p!=null?`<p class="qt">${zh(q)}</p>`:`<p class="qt muted">Câu ${qi+1}: nghe câu hỏi rồi chọn</p>`}
+  return `<div class="q" id="q-${key}">${showQ||p!=null?`<p class="qt">${zh(q)}</p>`:`<p class="qt muted">Nghe câu hỏi rồi chọn</p>`}
    <div class="opts">${o.map((oi,n)=>`<button class="opt ${p!=null?(oi===0?'right':oi===p?'wrong':''):''}" data-a="ans" data-k="${key}" data-o="${oi}" ${p!=null?'disabled':''}><b>${LET[n]}</b> ${zh(opts[oi])}</button>`).join('')}</div></div>`}
-function bandScore(list,b){const ks=list.filter(x=>x.b===b).flatMap(x=>(x.qs||[0]).map((_,i)=>x.id+'-'+i));const done=ks.filter(k=>S.q[k+'p']!=null),ok=done.filter(k=>S.q[k+'p']===0);return `Đã làm ${done.length}/${ks.length} câu, đúng ${ok.length}.`}
-function vListen(){const items=LISTEN.filter(x=>x.b===ui.band);
-  return `<header class="head"><h1>Luyện nghe</h1><p class="lead">Bấm nghe, chọn đáp án, rồi mới mở lời thoại. Câu hỏi được đọc sau đoạn hội thoại giống trong phòng thi.</p>${bandTabs()}<p class="small">${bandScore(LISTEN,ui.band)} <button class="link" data-a="resetq" data-p="l">Làm lại từ đầu</button></p>${voiceBar()}<p id="tts-msg" class="warn" hidden></p></header>
-  ${items.map((x,n)=>{const all=x.qs.every((_,i)=>S.q[x.id+'-'+i+'p']!=null),open=all||ui.shown[x.id];return `<section class="card item"><div class="row between"><h2>Bài ${n+1}${x.qs.length>1?' · đoạn độc thoại':''}</h2><button class="btn sm" data-a="play" data-id="${x.id}">Nghe</button></div>
+function passage(x){const g=ui.gloss[x.id];return `<div class="${x.k==='g'?'sign':'pass'}">${x.x.split('\n').map(p=>`<p>${zh(p)}</p>${g?`<p class="gloss" lang="zh-Hans">${esc(toSimp(p))}</p>`:''}`).join('')}</div><button class="link" data-a="gloss" data-id="${x.id}">${g?'Ẩn bản Giản thể':'Hiện bản Giản thể để đối chiếu'}</button>`}
+function vSet(){const {kind,d}=sub,st=setStat(kind,d),items=setItems(kind,d),L=kind==='l';
+  const head=`<header class="head"><p class="eyebrow">Ngày ${d} · ${L?'nghe':'đọc'} theo dạng đề</p><h1>${L?'Bài nghe':'Bài đọc'} ngày ${d}</h1>
+   <p class="lead">${L?'Bấm Nghe, chọn đáp án rồi mới mở lời thoại. Câu hỏi được đọc sau đoạn hội thoại, giống trong phòng thi.':'Đọc bằng chữ Phồn trước. Chỉ mở bản Giản thể sau khi đã chọn đáp án.'}</p>
+   <p>${st.pass?'<span class="chip ok">Hoàn thành</span> ':''}Đã làm ${st.done}/${st.n} câu, đúng ${st.ok}. Cần đúng từ ${Math.ceil(st.n*.8)} câu.</p>
+   <div class="row">${st.done>st.ok?`<button class="btn sm" data-a="redo" data-arg="${kind+d}">Làm lại ${st.done-st.ok} câu sai</button>`:''}<button class="btn sm ghost" data-a="close">Quay lại</button></div>${L?voiceBar()+'<p id="tts-msg" class="warn" hidden></p>':''}</header>`;
+  if(L)return head+items.map((x,n)=>{const all=x.qs.every((_,i)=>S.q[x.id+'-'+i+'p']!=null),open=all||ui.shown[x.id];return `<section class="card item"><div class="row between"><h2>${n+1}. ${zh(x.t||(x.qs.length>1?'段落':'對話'))}</h2><button class="btn sm" data-a="play" data-id="${x.id}">Nghe</button></div>
    ${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,false)).join('')}
-   ${open?`<div class="script">${x.l.map(l=>`<p>${zh(l)}</p>`).join('')}</div>`:`<button class="link" data-a="show" data-id="${x.id}">Xem lời thoại</button>`}</section>`}).join('')}
-  <section class="card"><h2>Nghe thêm ngoài web</h2><p>Mười mấy bài ở đây đủ để quen dạng câu hỏi, chưa đủ lượng nghe cho Band B và C. Mỗi ngày cần thêm 20 đến 30 phút tin tức, podcast hoặc phỏng vấn của Đài Loan. Xem gợi ý ở mục <a href="#cam-nang">Cẩm nang kỳ thi</a>.</p></section>`}
-function passage(x){const g=ui.gloss[x.id];return `<div class="pass">${x.x.split('\n').map(p=>`<p>${zh(p)}</p>${g?`<p class="gloss" lang="zh-Hans">${esc(toSimp(p))}</p>`:''}`).join('')}</div><button class="link" data-a="gloss" data-id="${x.id}">${g?'Ẩn bản Giản thể':'Hiện bản Giản thể để đối chiếu'}</button>`}
-function vRead(){const items=READ.filter(x=>x.b===ui.band),gaps=GAPS.filter(x=>x.b===ui.band);
-  return `<header class="head"><h1>Luyện đọc</h1><p class="lead">Đọc bằng chữ Phồn trước. Chỉ mở bản Giản thể khi đã thử đoán, để mắt quen dần hình chữ mới.</p>${bandTabs()}<p class="small">${bandScore(READ,ui.band)} <button class="link" data-a="resetq" data-p="r">Làm lại từ đầu</button></p></header>
-  ${items.map(x=>`<section class="card item"><h2>${zh(x.t)}</h2>${passage(x)}${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,true)).join('')}</section>`).join('')}
-  ${gaps.length?`<section class="card item"><h2>選詞填空 · Chọn từ điền chỗ trống</h2>${gaps.map((g,n)=>qBlock(g.id,0,(n+1)+'. '+g.s,g.o,true)).join('')}</section>`:'<section class="card"><p>Dạng chọn từ điền chỗ trống của Band A nằm trong bài thi thử.</p></section>'}`}
+   ${open?`<div class="script">${x.l.map(l=>`<p>${zh(l)}</p>`).join('')}</div>`:`<button class="link" data-a="show" data-id="${x.id}">Xem lời thoại</button>`}</section>`}).join('');
+  return head+items.map((x,n)=>x.s?`<section class="card item"><h2>${n+1}. ${zh('選詞填空')}</h2>${qBlock(x.id,0,x.s,x.o,true)}</section>`:`<section class="card item"><h2>${n+1}. ${zh(x.t)}</h2>${passage(x)}${x.qs.map(([q,o],i)=>qBlock(x.id,i,q,o,true)).join('')}</section>`).join('')}
 
 /* ===== Thi thử Band A ===== */
 const PARTS_L=[['看圖回答','Nhìn hình, nghe câu hỏi và ba đáp án'],['問答理解','Nghe một câu, chọn câu đáp phù hợp'],['對話理解（圖片）','Nghe hội thoại, chọn hình'],['對話理解（文字）','Nghe hội thoại, chọn câu']];
@@ -228,7 +263,7 @@ function vMockHome(){const h=S.hist.filter(x=>x.k==='A');
    <ul class="notes"><li>Phần nghe đi một chiều, không quay lại câu trước. Mỗi câu được nghe tối đa 2 lần.</li><li>Ở hai phần nghe đầu, đáp án chỉ được đọc lên, không hiện chữ, giống đề thật.</li><li>Hình trong đề thật là tranh vẽ. Ở đây dùng biểu tượng thay cho tranh, và giọng đọc là giọng máy.</li><li>Đề do Claude soạn theo khung đề chính thức, không phải đề của Ủy ban TOCFL. Số câu từng phần có thể lệch đôi chút so với đề thật.</li></ul>
    <div class="row"><button class="btn" data-a="mock">Bắt đầu thi thử Band A</button></div></section>
   ${h.length?`<section class="card"><h2>Kết quả đã làm</h2><div class="scroll"><table><thead><tr><th>Ngày</th><th>Nghe</th><th>Đọc</th><th>Tổng</th></tr></thead><tbody>${h.slice().reverse().map(x=>`<tr><td>${esc(x.d)}</td><td>${x.L}/50</td><td>${x.R}/50</td><td><b>${x.L+x.R}/100</b></td></tr>`).join('')}</tbody></table></div></section>`:''}
-  <section class="card"><h2>Band B và Band C</h2><p>Hai bài thi thử này chưa có trong web. Ở các ngày làm đề của giai đoạn 2 và 3, hãy dùng đề mẫu chính thức (模擬試題) trên trang của Ủy ban TOCFL, có file nghe do người thật đọc. Đường dẫn ở mục <a href="#cam-nang">Cẩm nang kỳ thi</a>.</p></section>`}
+  <section class="card"><h2>Band B và Band C</h2><p>Hai bài thi thử này chưa có trong web. Ở các ngày làm đề của chặng B và C, hãy dùng đề mẫu chính thức (模擬試題) trên trang của Ủy ban TOCFL, có file nghe do người thật đọc. Đường dẫn ở mục <a href="#cam-nang">Cẩm nang kỳ thi</a>.</p></section>`}
 const fmt=s=>{s=Math.max(0,s);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 let tick=null;
 function startTimer(){clearInterval(tick);tick=setInterval(()=>{if(!sub||sub.type!=='mock'){clearInterval(tick);return}const left=Math.round((sub.end-Date.now())/1000),el=$('#timer');if(el)el.textContent=fmt(left);if(left<=0){if(sub.stage==='L'){stopSpeak();sub.stage='mid';render()}else if(sub.stage==='R')finishMock()}},500)}
@@ -287,7 +322,8 @@ function vGuide(){const A=(u,t)=>`<a href="${u}" target="_blank" rel="noopener">
    <tr><td>B</td><td>${zh('對話、段落')}</td><td>${zh('選詞填空、閱讀理解')}</td></tr>
    <tr><td>C</td><td>${zh('對話、段落')}</td><td>${zh('選詞填空、閱讀理解')}</td></tr></tbody></table></div>
    <ul class="notes"><li>Thi một band, kết quả xếp vào một trong hai cấp của band đó. Mục tiêu C1 hoặc C2 nghĩa là đăng ký Band C.</li><li>Ở Việt Nam, bài thi tổ chức trên máy tính và thí sinh được chọn đề chữ Phồn hoặc chữ Giản. Bạn đã chọn Phồn thể, nên khi đăng ký nhớ chọn đúng.</li><li>Ở Đài Loan, bài nghe đọc hiện là dạng thích ứng (CAT): không chọn band, câu sau khó hay dễ tuỳ câu trước.</li><li>Lịch thi và điểm thi tại Việt Nam do Phòng Giáo dục, Văn phòng Kinh tế và Văn hoá Đài Bắc công bố theo từng năm. Đăng ký trực tuyến, chọn khu vực VIET NAM.</li></ul></section>
-  <section class="card"><h2>Từ HSK 6 sang TOCFL: khoảng cách nằm ở đâu</h2><ul class="notes"><li><b>Chữ.</b> Khoảng một phần ba số chữ thường dùng có dạng Phồn khác dạng Giản. Mục Chữ Phồn thể gom ${ALLC.length} chữ hay gặp nhất, đủ cho Band A và B. Lên Band C sẽ gặp thêm chữ hiếm, học qua bài đọc.</li><li><b>Từ.</b> HSK 6 cũ khoảng 5.000 từ, Band C cần khoảng 8.000 từ, lại có nhiều từ riêng của Đài Loan. Web này chưa chứa bảng 8.000 từ. Hãy tải bảng từ chính thức và học theo chủ đề như lộ trình ghi.</li><li><b>Nghe.</b> Giọng, tốc độ và cách dùng từ khác băng HSK. Cần nghe nguồn Đài Loan mỗi ngày.</li><li><b>Thời gian.</b> Hơn hai tháng với 5 đến 6 giờ mỗi ngày là đủ để chắc Band B và có cơ hội thật ở Level 5. Level 6 đòi hỏi vốn đọc rộng, nên coi đó là mục tiêu vươn tới.</li></ul></section>
+  <section class="card"><h2>Từ HSK 6 sang TOCFL: khoảng cách nằm ở đâu</h2><ul class="notes"><li><b>Chữ.</b> Khoảng một phần ba số chữ thường dùng có dạng Phồn khác dạng Giản. Mục Chữ Phồn thể gom ${ALLC.length} chữ hay gặp nhất, đủ cho Band A và B. Lên Band C sẽ gặp thêm chữ hiếm, học qua bài đọc.</li><li><b>Từ.</b> HSK 6 cũ khoảng 5.000 từ, Band C cần khoảng 8.000 từ, lại có nhiều từ riêng của Đài Loan. Mục Từ vựng TOCFL chứa toàn bộ ${WORDS.length} từ của bảng từ chính thức bản 2023, chia theo ngày.</li><li><b>Nghe.</b> Giọng, tốc độ và cách dùng từ khác băng HSK. Cần nghe nguồn Đài Loan mỗi ngày.</li><li><b>Thời gian.</b> Hơn hai tháng với 5 đến 6 giờ mỗi ngày là đủ để chắc Band B và có cơ hội thật ở Level 5. Level 6 đòi hỏi vốn đọc rộng, nên coi đó là mục tiêu vươn tới.</li></ul></section>
+  <section class="card"><h2>Nguồn dữ liệu của web</h2><ul class="notes"><li>Bảng từ: bảng từ TOCFL bản 2023 của Ủy ban TOCFL, lấy qua kho ${A('https://github.com/ivankra/tocfl','ivankra/tocfl')}.</li><li>Nghĩa tiếng Việt: từ điển mở ${A('https://github.com/ph0ngp/CVDICT','CVDICT')} của Phong Phan, giấy phép CC BY-SA 4.0, được chọn nghĩa tự động.</li><li>Thứ tự bài của ngày 1: sách ${zh('來學華語 第一冊')} của Ủy ban Sự vụ Cộng đồng người Hoa hải ngoại. Web không chép lại bài khoá của sách.</li></ul></section>
   <section class="card"><h2>Nguồn chính thức</h2><ul class="links">
    <li>${A('https://tocfl.edu.tw/','Ủy ban TOCFL (華測會)')}<span>Vào 學習資源 để tải đề mẫu 模擬試題 từng band kèm file nghe, và bảng từ vựng theo cấp.</span></li>
    <li>${A('https://tocfl.edu.tw/OS/','Hệ thống đăng ký thi')}<span>Chọn Test area là VIET NAM để xem các đợt thi trong nước.</span></li>
@@ -302,10 +338,25 @@ function vGuide(){const A=(u,t)=>`<a href="${u}" target="_blank" rel="noopener">
 
 /* ===== Sự kiện ===== */
 const ACT={
- task(el){const k='d'+el.dataset.d,i=+el.dataset.i,a=S.done[k]||(S.done[k]=[]);el.checked?a.includes(i)||a.push(i):a.splice(a.indexOf(i),1);save();render()},
  day(el){ui.day=+el.dataset.d;render()},
+ wt(el){const k=+el.dataset.arg,u=UNITS[k],ids=[];for(let i=u.a;i<u.z;i++){const r=S.w[i];if(!r||r[0]<1)ids.push(i)}
+   if(!ids.length){ui.unit=k;location.hash='tu-vung';render();toast('Bạn đã nắm hết từ của đơn vị này. Đây là danh sách để xem lại.');return}startWT(ids,u.t,'unit',k)},
+ wreview(){startWT(shuffle(dueWords()).slice(0,100),'Ôn từ đến hạn','review',null)},
+ retest(el){const k=+el.dataset.arg,u=UNITS[k];startWT(shuffle([...Array(u.z-u.a).keys()].map(i=>i+u.a)),'Vòng 2 · '+u.t,'retest',k)},
+ drill(el){const d=+el.dataset.arg,x=DAYS[d-1],u=UNITS[x.u];startWT(shuffle([...Array(u.z-u.a).keys()].map(i=>i+u.a)).slice(0,30),'Nghe từ, chọn chữ · ngày '+d,'drill',x.u,{day:d})},
+ ulist(el){ui.unit=el.dataset.arg===''?null:+el.dataset.arg;if(sub)sub=null;if(route()!=='tu-vung')location.hash='tu-vung';render();scrollTo(0,0)},
+ wsay(){sayW()},
+ wpick(el){const s=sub;if(!s||s.type!=='wt'||s.ans!=null)return;const cur=s.q[s.i],j=+el.dataset.j,ok=j===cur;
+   if(s.first[cur]===undefined){s.first[cur]=ok;s.n++;if(ok)s.ok++}
+   if(s.mode!=='drill'){gradeW(cur,ok);if(!ok)s.q.push(cur)}
+   s.ans=j;render();if(ok)setTimeout(()=>{if(sub===s&&s.ans===j&&s.q[s.i]===cur)ACT.wnext()},s.mode==='drill'?900:600)},
+ wnext(){const s=sub;if(!s||s.type!=='wt'||s.ans==null)return;s.i++;nextW();
+   if(s.i>=s.q.length){const p=pct(s.ok,s.n);if(s.mode==='retest'){S.rt[s.u]=p;save()}if(s.mode==='drill'){S.dr['d'+s.day]=Math.max(p,S.dr['d'+s.day]||0);save()}}
+   render();if(s.mode==='drill'&&s.i<s.q.length)sayW()},
+ set(el){const a=el.dataset.arg;sub={type:'set',kind:a[0],d:+a.slice(1)};render();scrollTo(0,0)},
+ redo(el){const a=el.dataset.arg;setItems(a[0],+a.slice(1)).forEach(x=>(x.qs||[0]).forEach((_,i)=>{const k=x.id+'-'+i;if(S.q[k+'p']!=null&&S.q[k+'p']!==0){delete S.q[k+'p'];delete ORD[k]}}));save();render()},
  review(){startStudy(dueCards(),'Ôn thẻ đến hạn')},
- study(el){const d=el.dataset.deck;d==='multi'?startStudy(MULTIC,'Một Giản, nhiều Phồn'):d==='vocab'?startStudy(VOCABC,'Từ vựng Đài Loan'):startStudy(DECKS[+d].cards,DECKS[+d].name)},
+ study(el){const d=el.dataset.deck;d==='multi'?startStudy(MULTIC,'Một Giản, nhiều Phồn'):d==='vocab'?startStudy(VOCABC,'Từ riêng Đài Loan'):startStudy(DECKS[+d].cards,DECKS[+d].name)},
  quiz(el){startQuiz(DECKS[+el.dataset.deck])},
  flip(){if(sub&&sub.type==='study'&&sub.i<sub.q.length){sub.flip=!sub.flip;render()}},
  grade(el){const s=sub,c=s.q[s.i],ok=el.dataset.ok==='1';grade(c.id,ok);s.n++;if(ok)s.ok++;else s.q.push(c);s.i++;s.flip=false;render()},
@@ -316,13 +367,11 @@ const ACT={
  stop(){stopSpeak()},
  export(){const blob=new Blob([JSON.stringify(S)],{type:'application/json'}),u=URL.createObjectURL(blob),l=document.createElement('a');l.href=u;l.download='hoc-phon-tien-do-'+isoOf(today())+'.json';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);toast('Đã tạo file sao lưu. Xem trong thư mục tải về.')},
  async install(){if(!installEvt)return;installEvt.prompt();try{await installEvt.userChoice}catch(e){}installEvt=null;showInstall()},
- band(el){ui.band=el.dataset.b;stopSpeak();render()},
  async play(el){const x=LISTEN.find(i=>i.id===el.dataset.id),L=parseLines(x.l);x.qs.forEach(([q],i)=>L.push({t:(x.qs.length>1?`第${'一二三'[i]}題，`:'問題：')+q,s:'n'}));
    const ok=await speak(L);if(!ok){const m=$('#tts-msg');if(m){m.hidden=false;m.textContent=noVoiceMsg}}},
  show(el){ui.shown[el.dataset.id]=1;render()},
  gloss(el){ui.gloss[el.dataset.id]=!ui.gloss[el.dataset.id];render()},
  ans(el){const k=el.dataset.k;S.q[k+'p']=+el.dataset.o;save();const y=scrollY;render();scrollTo(0,y)},
- resetq(el){Object.keys(S.q).forEach(k=>{if(k[0]===el.dataset.p||(el.dataset.p==='r'&&k[0]==='g'))delete S.q[k]});Object.keys(ORD).forEach(k=>delete ORD[k]);ui.shown={};save();render()},
  mock(){sub=buildMock();render();scrollTo(0,0)},
  async mtest(){const ok=await speak([{t:'歡迎參加華語文能力測驗。',s:'n'},{t:'你好，今天天氣很好。',s:'f'},{t:'是啊，我們出去走走吧。',s:'m'}]);const m=$('#tts-msg');if(m&&!ok){m.hidden=false;m.textContent=noVoiceMsg}},
  mstartL(){sub.stage='L';sub.i=0;sub.end=Date.now()+60*60e3;startTimer();render();scrollTo(0,0)},
@@ -337,9 +386,14 @@ function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTim
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!el.dataset.a||el.disabled)return;if(el.tagName==='INPUT')return;const f=ACT[el.dataset.a];if(f)f(el)});
 document.addEventListener('change',e=>{const el=e.target;if(el.dataset.a==='task')return ACT.task(el);const c=el.dataset.c;if(!c||c==='vq')return;
   if(c==='import'){const f=el.files&&el.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d!=='object'||typeof d.srs!=='object'||!d.start)throw 0;S=Object.assign(defaults(),d);save();render();toast('Đã nhập tiến độ từ file sao lưu.')}).catch(()=>toast('File này không phải file sao lưu của web. Hãy chọn file .json đã tải từ nút Tải file sao lưu.'));return}
+  if(c==='ex'){const v=el.value===''?null:Math.max(0,Math.min(50,+el.value)),e=S.ex[el.dataset.id]||(S.ex[el.dataset.id]={});if(v==null)delete e[el.dataset.f];else e[el.dataset.f]=v;save();render();return}
   if(c==='start'){if(el.value){S.start=el.value;ui.day=null}}else if(c==='exam')S.exam=el.value;else if(c==='rate')S.rate=+el.value;else if(c==='voice')S.voice=el.value;save();if(c==='start'||c==='exam')render()});
 document.addEventListener('input',e=>{if(e.target.dataset.c==='vq'){ui.vq=e.target.value;const f=ui.vq.trim().toLowerCase();document.querySelectorAll('#vtab tbody tr').forEach(tr=>tr.hidden=!!f&&!tr.textContent.toLowerCase().includes(f))}});
-document.addEventListener('keydown',e=>{if(!sub||sub.type!=='study'||sub.i>=sub.q.length)return;if(e.target.closest('input,select,button')&&e.key===' ')return;
+document.addEventListener('keydown',e=>{if(sub&&sub.type==='wt'&&sub.i<sub.q.length&&!e.target.closest('input,select')){const s=sub;
+    if(s.ans==null&&/^[1-4]$/.test(e.key)&&s.opts[+e.key-1]!=null){e.preventDefault();ACT.wpick({dataset:{j:s.opts[+e.key-1]}})}
+    else if(s.ans==null&&e.key==='0'){e.preventDefault();ACT.wpick({dataset:{j:-1}})}
+    else if(s.ans!=null&&(e.key==='Enter'||e.key===' ')){e.preventDefault();ACT.wnext()}return}
+  if(!sub||sub.type!=='study'||sub.i>=sub.q.length)return;if(e.target.closest('input,select,button')&&e.key===' ')return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();ACT.flip()}else if(sub.flip&&(e.key==='1'||e.key==='2'))ACT.grade({dataset:{ok:e.key==='2'?'1':'0'}})});
 try{speechSynthesis.onvoiceschanged=()=>{}}catch(e){}voices();
 if(window.claude&&claude.use)claude.use('tts').then(t=>{TTS.cl=t}).catch(()=>{});

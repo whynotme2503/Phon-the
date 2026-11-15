@@ -122,3 +122,19 @@ td.big,.big{font-family:var(--han-d);font-size:1.6rem;line-height:1.2}
   .tasks li{flex-wrap:wrap}.tasks label{flex-basis:100%}
 }
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .3s}}
+
+/* Lộ trình tự chấm */
+.chip{display:inline-block;font-size:.75rem;font-weight:600;padding:2px 10px;border-radius:99px;background:var(--line);color:var(--muted);white-space:nowrap}
+.chip.ok{background:var(--good-soft);color:var(--good)}.chip.mid{background:var(--warn-soft);color:var(--warn)}.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.tasks li{align-items:center}
+.tk{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}.tk .bar{max-width:320px;height:6px}
+.tkr{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.tasks .done b{color:var(--muted)}
+input[type=number]{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;width:72px}
+.opt.wd{font-family:var(--han-d);font-size:1.6rem}
+.study .bar{width:100%}
+.deck .eyebrow{font-size:.72rem}
+table th[colspan]{background:var(--accent-soft);color:var(--accent);font-size:.85rem}
+@media (max-width:820px){.tkr{flex-direction:row;align-items:center;flex-basis:100%;justify-content:space-between}.tasks li{flex-wrap:wrap}}
+
+.study .opts{width:100%}
