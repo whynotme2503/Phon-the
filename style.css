@@ -142,3 +142,6 @@ table th[colspan]{background:var(--accent-soft);color:var(--accent);font-size:.8
 #player{position:fixed;left:0;right:0;bottom:0;z-index:9;background:var(--surface);border-top:1px solid var(--line);padding:8px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 #player audio{flex:1;min-width:200px;height:40px}#pl-title{font-weight:600;font-size:.9rem}
 #player:not([hidden])~#toast{bottom:84px}
+
+.chip.lv1{background:var(--good-soft);color:var(--good)}.chip.lv2{background:var(--warn-soft);color:var(--warn)}.chip.lv3{background:var(--bad-soft);color:var(--bad)}
+.qt .chip{margin-left:6px;vertical-align:middle}
