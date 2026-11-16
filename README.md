@@ -27,6 +27,9 @@ Sau khoảng một phút, web chạy tại `https://whynotme2503.github.io/Phon-
 | `index.html` | Khung trang, tên web | Hiếm khi |
 | `t2s.js` | Bảng chữ Phồn → Giản, tạo tự động | Không cần sửa |
 | `fflate.js` | Thư viện đọc file zip (fflate, giấy phép MIT) | Không cần sửa |
+| `config.js` | Địa chỉ máy chủ tài khoản | Sửa một lần sau khi dựng Worker |
+| `server/worker.js` | Code máy chủ, dán lên Cloudflare Worker | Khi đổi cách hoạt động của tài khoản |
+| `server/schema.sql` | Bảng dữ liệu, chạy một lần trên D1 | Hầu như không |
 | `manifest.webmanifest`, `sw.js`, `icons/` | Phần giúp web cài được như app và mở được khi mất mạng | Không cần sửa |
 
 ## Thêm bài cho một ngày trong `days.js`
@@ -44,6 +47,19 @@ Sau khoảng một phút, web chạy tại `https://whynotme2503.github.io/Phon-
 - **Thêm bài nghe** (`LISTEN`): `{b:"B", l:["男：…","女：…"], qs:[["câu hỏi",["đúng","sai","sai","sai"]]]}`. `b` là band A, B hoặc C.
 - **Thêm bài đọc** (`READ`): `{b:"C", t:"tiêu đề", x:"nội dung", qs:[[…]]}`.
 - **Thêm câu điền từ** (`GAPS`): `{b:"B", s:"câu có ＿＿", o:["đúng","sai","sai","sai"]}`.
+
+## Tài khoản và đồng bộ
+
+Mặc định web chỉ lưu tiến độ trên từng máy. Muốn tiến độ đi theo người học giữa điện thoại và máy tính thì dựng một máy chủ nhỏ trên Cloudflare, miễn phí, làm một lần: xem `server/HUONG-DAN.md`.
+
+Dựng xong thì có hai vai:
+
+- **Giáo viên** vào `#quan-tri`, nhập `ADMIN_KEY`, cấp mã cho học viên và xem số tài khoản, lượt truy cập, ai học đến đâu. Web không cho tự mở tài khoản, mã chỉ do giáo viên cấp.
+- **Học viên** vào mục Tài khoản, nhập mã và mật khẩu được cấp. Mỗi tài khoản giữ một bản tiến độ riêng trên máy, nên hai người dùng chung một máy không lẫn nhau.
+
+Mật khẩu được băm PBKDF2-SHA256 trước khi lưu, nên quên là phải cấp lại chứ không xem lại được. Sai mật khẩu 20 lần trong một giờ thì mã đó bị khoá tạm.
+
+Tài khoản chỉ dùng để lưu tiến độ, không khoá nội dung: web tĩnh thì bài học nằm trong file mà trình duyệt phải tải về, ai cũng đọc được.
 
 ## File nghe của sách
 

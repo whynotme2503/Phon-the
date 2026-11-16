@@ -20,7 +20,11 @@ const PRONL=PRON.split('\n').map(l=>l.split('|'));
 LISTEN.forEach((x,i)=>x.id='l'+i);READ.forEach((x,i)=>x.id='r'+i);GAPS.forEach((x,i)=>x.id='g'+i);
 
 /* ===== Trạng thái, lưu trữ ===== */
-const KEY='tocfl-on-thi-v1';
+const AKEY='tocfl-tai-khoan',ADMKEY='tocfl-quan-tri';
+/* Tài khoản đang đăng nhập trên thiết bị này, hoặc null nếu học không đăng nhập */
+let AU=null;try{AU=JSON.parse(localStorage.getItem(AKEY)||'null')}catch(e){}
+/* Mỗi tài khoản giữ một bản tiến độ riêng trên máy, để hai người dùng chung máy không lẫn nhau */
+const dkey=()=>'tocfl-on-thi-v1'+(AU?':'+AU.code:'');
 const defaults=()=>({start:isoOf(today()),exam:'',done:{},srs:{},w:{},rt:{},ex:{},dr:{},q:{},hist:[],voice:'auto',rate:1,t:0});
 let S=defaults();
 /* Đổi tiến độ của cách chia đơn vị cũ sang cách chia hiện tại */
@@ -28,12 +32,49 @@ function normalize(o){const s=Object.assign(defaults(),o);if(s.wv!==WV){const v=
   if(v<3){const nw={};for(const k in s.w){const p2=v===1?MIG1[k]:+k,id=ORD2[p2];if(id!=null)nw[id]=s.w[k]}s.w=nw;
     const rt={},dr={};if(s.rt[0]!=null)rt.k1=s.rt[0];if(s.rt[1]!=null&&v===2)rt.k2=s.rt[1];if(s.dr.d1!=null)dr.k1=s.dr.d1;if(s.dr.d2!=null&&v===2)dr.k2=s.dr.d2;s.rt=rt;s.dr=dr}
   s.wv=WV}return s}
-try{const raw=localStorage.getItem(KEY);if(raw)S=normalize(JSON.parse(raw));else S.wv=WV}catch(e){}
-let cloud=null,saveTimer=null,writing=false,dirty=false,syncState='local';
-function setSync(s){syncState=s;const el=$('#sync');if(el)el.textContent=s==='ok'?'Tiến độ được lưu theo tài khoản của bạn':s==='err'?'Chưa lưu được lên tài khoản, đang giữ trên trình duyệt này':'Tiến độ đang lưu trên trình duyệt này'}
-function save(){S.t=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(push,4000)}
-async function push(){if(!cloud||writing||!dirty)return;writing=true;dirty=false;try{await cloud.set({json:JSON.stringify(S),t:S.t});setSync('ok')}catch(e){setSync('err')}writing=false;if(dirty){clearTimeout(saveTimer);saveTimer=setTimeout(push,4000)}}
-async function initCloud(){try{if(!window.claude||!claude.use)return;const [db,user]=await Promise.all([claude.use('db'),claude.use('user')]);if(!db||!user)return;const id=await user.id();if(!id)return;cloud=db.doc('data/users/'+id+'/progress');const snap=await cloud.get();if(snap.exists){const d=snap.data();if(d&&d.json&&d.t>(S.t||0)){S=normalize(JSON.parse(d.json));try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(!sub)render()}}setSync('ok');if(dirty||!snap.exists&&S.t)push()}catch(e){}}
+function loadLocal(){try{const raw=localStorage.getItem(dkey());S=raw?normalize(JSON.parse(raw)):Object.assign(defaults(),{wv:WV})}catch(e){S=Object.assign(defaults(),{wv:WV})}}
+loadLocal();
+let saveTimer=null,writing=false,dirty=false,syncState=AU?'wait':'local',lastPush=0;
+const SYNCMSG={ok:()=>`Đã đồng bộ · ${AU.code}`,wait:()=>`Đang đồng bộ · ${AU.code}`,err:()=>'Chưa lên được máy chủ, đang giữ trên máy này',off:()=>'Chưa đăng nhập, tiến độ chỉ ở máy này',local:()=>'Tiến độ đang lưu trên trình duyệt này'};
+function setSync(s){syncState=s;const el=$('#sync');if(el)el.textContent=(SYNCMSG[s]||SYNCMSG.local)()}
+function save(){S.t=Date.now();try{localStorage.setItem(dkey(),JSON.stringify(S))}catch(e){}
+  if(!AU)return;dirty=true;clearTimeout(saveTimer);
+  /* giãn nhịp gửi: ít nhất 15 giây một lần, tránh ghi quá nhiều lên máy chủ */
+  saveTimer=setTimeout(push,Math.max(2000,15000-(Date.now()-lastPush)))}
+
+const api=(p,o={})=>fetch(API.replace(/\/+$/,'')+p,{...o,headers:{'content-type':'application/json',...(o.headers||{}),...(AU?{authorization:'Bearer '+AU.token}:{})}});
+function signOut(msg){AU=null;localStorage.removeItem(AKEY);loadLocal();setSync('off');if(!sub)render();if(msg)toast(msg)}
+async function push(){if(!AU||!API||writing||!dirty)return;writing=true;dirty=false;lastPush=Date.now();
+  try{const r=await api('/api/progress',{method:'PUT',body:JSON.stringify({json:JSON.stringify(S),t:S.t,words:knownWords(),days:DAYS.filter((_,k)=>dayDone(k)).length})});
+    if(r.status===401){writing=false;return signOut('Phiên đăng nhập đã hết. Đăng nhập lại để đồng bộ tiếp.')}
+    const d=await r.json();
+    if(d.stale){writing=false;return pull(true)}
+    setSync(r.ok?'ok':'err')}
+  catch(e){setSync('err')}
+  writing=false;if(dirty){clearTimeout(saveTimer);saveTimer=setTimeout(push,15000)}}
+/* Lấy tiến độ trên máy chủ. force: lấy cả khi bản trên máy chủ cũ hơn (dùng khi bị chặn ghi đè) */
+async function pull(force){if(!AU||!API)return;
+  try{const r=await api('/api/progress');
+    if(r.status===401)return signOut('Phiên đăng nhập đã hết. Đăng nhập lại để đồng bộ tiếp.');
+    const d=await r.json();
+    if(d.json&&(force||d.t>(S.t||0))){S=normalize(JSON.parse(d.json));try{localStorage.setItem(dkey(),JSON.stringify(S))}catch(e){}if(!sub)render()}
+    setSync('ok');
+    if(!d.json&&S.t)save();                /* máy chủ chưa có gì: đẩy bản trên máy lên */
+    api('/api/ping',{method:'POST'}).catch(()=>{})}
+  catch(e){setSync('err')}}
+const NETERR='Không gọi được máy chủ. Kiểm tra mạng, hoặc địa chỉ máy chủ trong config.js.';
+async function doLogin(code,pw){
+  const r=await api('/api/login',{method:'POST',body:JSON.stringify({code,pw})}).catch(()=>{throw new Error(NETERR)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||'Không đăng nhập được');
+  AU={code:d.code,name:d.name||'',token:d.token};localStorage.setItem(AKEY,JSON.stringify(AU));
+  loadLocal();setSync('wait');await pull();return d}
+/* Bản chạy trong artifact của Claude: đồng bộ theo tài khoản Claude, không cần mã */
+async function initCloud(){if(API||AU)return;try{if(!window.claude||!claude.use)return;const [db,user]=await Promise.all([claude.use('db'),claude.use('user')]);if(!db||!user)return;const id=await user.id();if(!id)return;
+  const doc=db.doc('data/users/'+id+'/progress'),snap=await doc.get();
+  if(snap.exists){const d=snap.data();if(d&&d.json&&d.t>(S.t||0)){S=normalize(JSON.parse(d.json));try{localStorage.setItem(dkey(),JSON.stringify(S))}catch(e){}if(!sub)render()}}
+  setSync('ok');const w=()=>doc.set({json:JSON.stringify(S),t:S.t}).then(()=>setSync('ok'),()=>setSync('err'));
+  const base=save;save=function(){base();clearTimeout(saveTimer);saveTimer=setTimeout(w,4000)};w()}catch(e){}}
 
 /* ===== Giọng đọc ===== */
 const TTS={cl:null,tok:0};
@@ -142,16 +183,18 @@ const dayStarted=i=>dayTasks(i).some(t=>t.pc>0);
 const curIdx=()=>{for(let i=0;i<ND;i++)if(!dayDone(i))return i;return ND-1};
 const calDay=()=>today()-dayOf(S.start)+1;
 /* ===== Điều hướng ===== */
-const NAV=[['hom-nay','Hôm nay'],['lo-trinh','Lộ trình'],['tu-vung','Từ vựng TOCFL'],['chu-phon','Chữ Phồn thể'],['dai-loan','Từ riêng Đài Loan'],['thi-thu','Thi thử'],['cam-nang','Cẩm nang kỳ thi']];
+const NAV=[['hom-nay','Hôm nay'],['lo-trinh','Lộ trình'],['tu-vung','Từ vựng TOCFL'],['chu-phon','Chữ Phồn thể'],['dai-loan','Từ riêng Đài Loan'],['thi-thu','Thi thử'],['cam-nang','Cẩm nang kỳ thi'],['tai-khoan','Tài khoản'],['quan-tri','Quản trị']];
+/* Mục Quản trị chỉ hiện sau khi đã nhập đúng mật khẩu quản trị một lần trên máy này */
+const navShown=()=>NAV.filter(([h])=>h!=='quan-tri'||localStorage.getItem(ADMKEY));
 let sub=null;      /* phiên học thẻ, trắc nghiệm hoặc bài thi đang mở */
 let ui={day:null,unit:null,gloss:{},shown:{},vq:''};
 const ORD={};const ord=(k,n)=>ORD[k]||(ORD[k]=shuffle([...Array(n).keys()]));
 const route=()=>{const h=location.hash.slice(1);return NAV.some(n=>n[0]===h)?h:'hom-nay'};
 function render(){const r=route();
   const dw=dueWords().length,dc=dueCards().length;
-  $('#nav').innerHTML=NAV.map(([h,t])=>{const n=h==='tu-vung'?dw:h==='chu-phon'?dc:0;return `<a href="#${h}" ${h===r?'aria-current="page"':''}>${t}${n?`<b>${n}</b>`:''}</a>`}).join('');
+  $('#nav').innerHTML=navShown().map(([h,t])=>{const n=h==='tu-vung'?dw:h==='chu-phon'?dc:0;return `<a href="#${h}" ${h===r?'aria-current="page"':''}>${t}${n?`<b>${n}</b>`:''}</a>`}).join('');
   const m=$('#main');
-  m.innerHTML=sub?({mock:vMock,quiz:vQuiz,study:vStudy,wt:vWT,set:vSet})[sub.type]():({'hom-nay':vToday,'lo-trinh':vPlan,'tu-vung':vUnits,'chu-phon':vChars,'dai-loan':vVocab,'thi-thu':vMockHome,'cam-nang':vGuide})[r]();
+  m.innerHTML=sub?({mock:vMock,quiz:vQuiz,study:vStudy,wt:vWT,set:vSet})[sub.type]():({'hom-nay':vToday,'lo-trinh':vPlan,'tu-vung':vUnits,'chu-phon':vChars,'dai-loan':vVocab,'thi-thu':vMockHome,'cam-nang':vGuide,'tai-khoan':vAccount,'quan-tri':vAdmin})[r]();
   setSync(syncState)}
 addEventListener('hashchange',()=>{if(sub&&sub.type==='mock'&&sub.stage!=='done'&&sub.stage!=='intro'){/* giữ bài thi */}else sub=null;ui.unit=null;stopSpeak();render();scrollTo(0,0)});
 
@@ -376,6 +419,80 @@ function vGuide(){const A=(u,t)=>`<a href="${u}" target="_blank" rel="noopener">
    <li>${A('https://www.twreporter.org/','報導者')}<span>Phóng sự điều tra dài, văn phong gần với bài đọc Band C.</span></li>
    <li>${A('https://www.cw.com.tw/','天下雜誌')}<span>Kinh tế, xã hội, giáo dục. Đọc phần bình luận để quen cách lập luận.</span></li></ul></section>`}
 
+/* ===== Tài khoản ===== */
+const dtime=t=>!t?'chưa vào lần nào':new Date(t).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+function vAccount(){
+  if(!API)return `<header class="head"><h1>Tài khoản</h1><p class="lead">Phần đồng bộ chưa được bật.</p></header>
+   <section class="card"><h2>Chưa có máy chủ</h2><p>Web đang chạy ở chế độ chỉ lưu trên máy: học vẫn đủ, nhưng tiến độ không đi theo bạn sang máy khác. Muốn bật đồng bộ thì dựng máy chủ theo <code>server/HUONG-DAN.md</code> trong kho, rồi dán địa chỉ Worker vào file <code>config.js</code>.</p>
+   <p class="muted small">Trong lúc chờ, dùng nút Tải file sao lưu ở trang Hôm nay để chuyển tiến độ sang máy khác.</p></section>`;
+  if(!AU)return `<header class="head"><h1>Đăng nhập</h1><p class="lead">Nhập mã và mật khẩu giáo viên đã cấp. Đăng nhập rồi thì tiến độ tự đi theo bạn giữa điện thoại và máy tính.</p></header>
+   <section class="card" style="max-width:26rem"><h2>Mã học viên</h2>
+    <label class="fld" for="in-code">Mã<input id="in-code" autocomplete="username" spellcheck="false" placeholder="HP-____-____" value=""></label>
+    <label class="fld" for="in-pw">Mật khẩu<input id="in-pw" type="password" autocomplete="current-password" spellcheck="false" placeholder="____-____"></label>
+    <p id="log-msg" class="warn" hidden></p>
+    <div class="row"><button class="btn" data-a="login">Đăng nhập</button></div>
+    <p class="muted small">Không phân biệt chữ hoa chữ thường. Chưa có mã thì nhắn giáo viên; web không tự mở tài khoản.</p></section>
+   <section class="card"><h2>Chưa đăng nhập cũng học được</h2><p>Mọi bài học đều mở. Chỉ khác là tiến độ nằm riêng trên máy này, và giáo viên không thấy được.</p></section>`;
+  const dd=DAYS.filter((_,k)=>dayDone(k)).length;
+  return `<header class="head"><p class="eyebrow">${esc(AU.code)}</p><h1>${esc(AU.name||'Tài khoản của bạn')}</h1>
+   <p class="lead">Tiến độ được gửi lên máy chủ sau mỗi thay đổi, và tải về mỗi lần bạn mở web. Cứ đăng nhập cùng mã này ở máy khác là học tiếp đúng chỗ đang dở.</p></header>
+  <section class="tiles">
+   <div class="tile"><span class="num">${knownWords()}<small>/${WORDS.length}</small></span><span class="lab">từ đã nắm</span></div>
+   <div class="tile"><span class="num">${dd}<small>/${ND}</small></span><span class="lab">ngày đã hoàn thành</span></div>
+   <div class="tile ${syncState==='err'?'attn':''}"><span class="num" style="font-size:1.1rem">${syncState==='ok'?'Đã đồng bộ':syncState==='err'?'Chưa gửi được':'Đang gửi'}</span><span class="lab">${S.t?'lần cuối '+dtime(S.t):'chưa có gì'}</span></div>
+  </section>
+  <section class="card"><h2>Thiết bị này</h2><p>Mã <b>${esc(AU.code)}</b>. Đăng xuất chỉ tháo mã khỏi máy này, tiến độ trên máy chủ vẫn còn nguyên.</p>
+   <div class="row"><button class="btn sm" data-a="sync">Đồng bộ ngay</button><button class="btn sm ghost" data-a="logout">Đăng xuất</button></div></section>`}
+
+/* ===== Quản trị: giáo viên cấp mã và xem tình hình ===== */
+let adm={key:localStorage.getItem(ADMKEY)||'',stats:null,list:null,created:null,cmode:'new',msg:'',busy:false};
+async function admCall(path,body){
+  const r=await fetch(API.replace(/\/+$/,'')+'/api/admin/'+path,{method:body?'POST':'GET',headers:{'content-type':'application/json','x-admin-key':adm.key},body:body?JSON.stringify(body):undefined}).catch(()=>{throw new Error(NETERR)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||'Lỗi '+r.status);
+  return d}
+async function admLoad(){adm.busy=true;try{const [s,l]=await Promise.all([admCall('stats'),admCall('list')]);adm.stats=s;adm.list=l.accounts;adm.msg='';localStorage.setItem(ADMKEY,adm.key)}
+  catch(e){adm.msg=e.message;if(/quản trị/i.test(e.message)){adm.key='';localStorage.removeItem(ADMKEY)}}
+  adm.busy=false;render()}
+function vAdmin(){
+  if(!API)return `<header class="head"><h1>Quản trị</h1></header><section class="card"><p>Chưa có máy chủ. Dựng Worker theo <code>server/HUONG-DAN.md</code> rồi dán địa chỉ vào <code>config.js</code>.</p></section>`;
+  if(!adm.key||(!adm.stats&&!adm.busy&&adm.msg))return `<header class="head"><h1>Trang giáo viên</h1><p class="lead">Nhập mật khẩu quản trị, chính là chuỗi bạn đặt làm <code>ADMIN_KEY</code> trên Cloudflare.</p></header>
+   <section class="card" style="max-width:26rem"><label class="fld" for="in-adm">Mật khẩu quản trị<input id="in-adm" type="password" autocomplete="current-password"></label>
+   ${adm.msg?`<p class="warn">${esc(adm.msg)}</p>`:''}<div class="row"><button class="btn" data-a="admin">Mở trang</button></div></section>`;
+  if(!adm.stats)return `<header class="head"><h1>Trang giáo viên</h1></header><section class="card"><p>Đang tải…</p></section>`;
+  const s=adm.stats,L=adm.list||[];
+  /* vẽ đủ 30 ngày, ngày không ai vào để cột trống, nhìn mới ra nhịp học */
+  const got={};s.byDay.forEach(d=>got[d.day]=d);
+  const span=[...Array(30)].map((_,k)=>{const day=new Date(Date.now()-(29-k)*864e5).toISOString().slice(0,10);return got[day]||{day,n:0,u:0}});
+  const mx=Math.max(1,...span.map(d=>d.n));
+  return `<header class="head"><h1>Trang giáo viên</h1><p class="lead">Cấp mã cho học viên, xem ai đang học và học đến đâu. Mật khẩu chỉ hiện đúng một lần lúc cấp, nên nhớ lưu lại; quên thì bấm Đổi mật khẩu để cấp cái mới.</p></header>
+  <section class="tiles">
+   <div class="tile"><span class="num">${s.accounts}</span><span class="lab">tài khoản đã cấp</span></div>
+   <div class="tile"><span class="num">${s.visits}</span><span class="lab">lượt truy cập</span></div>
+   <div class="tile"><span class="num">${s.visitsToday}</span><span class="lab">lượt hôm nay</span></div>
+   <div class="tile"><span class="num">${s.usersWeek}</span><span class="lab">học viên vào trong 7 ngày</span></div>
+  </section>
+  ${s.byDay.length?`<section class="card"><h2>Lượt truy cập 30 ngày</h2><div class="spark">${span.map(d=>`<i class="${d.n?'':'zero'}" style="height:${d.n?Math.max(6,Math.round(d.n/mx*100)):0}%" title="${d.day}: ${d.n} lượt, ${d.u} học viên"></i>`).join('')}</div>
+   <p class="muted small">Cột cao nhất là ${mx} lượt. Mỗi học viên tính nhiều nhất một lượt trong 6 giờ.</p></section>`:''}
+  <section class="card"><h2>Cấp tài khoản mới</h2>
+   <div class="row"><label class="fld inl" for="adm-n">Số tài khoản<input type="number" id="adm-n" min="1" max="50" value="1"></label>
+   <label class="fld" for="adm-names">Tên học viên, mỗi dòng một tên (để trống cũng được)<textarea id="adm-names" rows="3" placeholder="Nguyễn Thị A&#10;Trần Văn B"></textarea></label></div>
+   <div class="row"><button class="btn sm" data-a="admnew">Cấp mã</button></div>
+   ${adm.created?`<div class="newacc"><p><b>${adm.cmode==='reset'?'Đã đổi mật khẩu.':`Đã cấp ${adm.created.length} tài khoản.`}</b> Chép lại ngay, mật khẩu sẽ không hiện lại nữa.</p>
+    <table class="tb"><thead><tr><th>Tên</th><th>Mã</th><th>Mật khẩu</th></tr></thead><tbody>${adm.created.map(a=>`<tr><td>${esc(a.name||'—')}</td><td><code>${esc(a.code)}</code></td><td><code>${esc(a.pw)}</code></td></tr>`).join('')}</tbody></table>
+    <div class="row"><button class="btn sm" data-a="admcopy">Chép vào bộ nhớ tạm</button><button class="btn sm ghost" data-a="admcsv">Tải file CSV</button><button class="btn sm ghost" data-a="admhide">Ẩn đi</button></div></div>`:''}
+  </section>
+  <section class="card"><div class="row between"><h2>Danh sách ${L.length} tài khoản</h2><button class="btn sm ghost" data-a="admload">Tải lại</button></div>
+   ${adm.msg?`<p class="warn">${esc(adm.msg)}</p>`:''}
+   <div class="scrollx"><table class="tb"><thead><tr><th>Tên</th><th>Mã</th><th>Từ đã nắm</th><th>Ngày xong</th><th>Lượt</th><th>Lần cuối</th><th></th></tr></thead>
+   <tbody>${L.map(a=>`<tr class="${a.active?'':'off'}"><td>${esc(a.name||'—')}</td><td><code>${esc(a.code)}</code></td>
+    <td>${a.words??0}</td><td>${a.days??0}</td><td>${a.visits}</td><td class="small">${dtime(a.last_seen)}</td>
+    <td class="row nowrap"><button class="btn sm ghost" data-a="admreset" data-code="${esc(a.code)}">Đổi mật khẩu</button>
+     <button class="btn sm ghost" data-a="admtoggle" data-code="${esc(a.code)}" data-on="${a.active?1:0}">${a.active?'Tạm dừng':'Mở lại'}</button>
+     <button class="btn sm ghost" data-a="admdel" data-code="${esc(a.code)}">Xoá</button></td></tr>`).join('')}</tbody></table></div>
+   <p class="muted small">"Từ đã nắm" và "Ngày xong" do web của học viên gửi lên mỗi lần đồng bộ. Tài khoản tạm dừng thì không đăng nhập được nhưng tiến độ vẫn giữ.</p></section>
+  <section class="card"><div class="row"><button class="btn sm ghost" data-a="admout">Thoát trang giáo viên trên máy này</button></div></section>`}
+
 /* ===== Sự kiện ===== */
 const ACT={
  day(el){ui.day=+el.dataset.d;render()},
@@ -424,8 +541,40 @@ const ACT={
  mpick(el){const m=sub,o=+el.dataset.o;if(m.stage==='L'){m.aL[m.i]=o;render()}else{const q=el.closest('.q'),qi=+q.dataset.qi;m.aR[qi]=o;q.querySelectorAll('.opt').forEach(b=>b.classList.toggle('sel',b===el));$('#rdone').textContent=Object.keys(m.aR).length}},
  mnext(){const m=sub;stopSpeak();m.playing=false;if(m.i>=49){m.stage='mid';clearInterval(tick)}else m.i++;render();scrollTo(0,0)},
  mfinish(){const left=50-Object.keys(sub.aR).length;if(left&&!sub.confirm){sub.confirm=true;toast(`Còn ${left} câu chưa chọn. Bấm Nộp bài lần nữa để nộp.`);return}finishMock()},
- async replay(el){const ok=await speak(mockLines(sub.L[+el.dataset.i]));if(!ok)toast(noVoiceMsg)}
+ async replay(el){const ok=await speak(mockLines(sub.L[+el.dataset.i]));if(!ok)toast(noVoiceMsg)},
+
+ /* --- tài khoản --- */
+ async login(el){const c=$('#in-code').value.trim(),p=$('#in-pw').value.trim(),m=$('#log-msg');
+   if(!c||!p){m.hidden=false;m.textContent='Nhập cả mã và mật khẩu.';return}
+   el.disabled=true;el.textContent='Đang kiểm tra…';
+   try{const d=await doLogin(c,p);render();toast(`Xin chào${d.name?' '+d.name:''}. Tiến độ đã đồng bộ.`)}
+   catch(e){el.disabled=false;el.textContent='Đăng nhập';const m2=$('#log-msg');if(m2){m2.hidden=false;m2.textContent=e.message}}},
+ logout(){if(!ACT.logout.c){ACT.logout.c=1;toast('Bấm Đăng xuất lần nữa để xác nhận.');setTimeout(()=>ACT.logout.c=0,5000);return}
+   ACT.logout.c=0;flush();signOut('Đã đăng xuất khỏi máy này.')},
+ async sync(){setSync('wait');render();if(dirty){clearTimeout(saveTimer);await push()}else await pull();render();toast(syncState==='ok'?'Đã đồng bộ.':'Chưa gửi được lên máy chủ. Thử lại sau.')},
+
+ /* --- quản trị --- */
+ admin(){const v=$('#in-adm').value.trim();if(!v)return;adm.key=v;adm.msg='';adm.stats=null;render();admLoad()},
+ admload(){adm.msg='';admLoad()},
+ admout(){adm={key:'',stats:null,list:null,created:null,msg:'',busy:false};localStorage.removeItem(ADMKEY);location.hash='hom-nay';render()},
+ admhide(){adm.created=null;adm.cmode='new';render()},
+ async admnew(el){const n=Math.max(1,Math.min(50,+$('#adm-n').value||1));
+   const names=$('#adm-names').value.split('\n').map(s=>s.trim()).filter(Boolean);
+   el.disabled=true;el.textContent='Đang cấp…';
+   try{const d=await admCall('create',{n:Math.max(n,names.length),names});adm.created=d.created;adm.cmode='new';await admLoad()}
+   catch(e){adm.msg=e.message;render()}},
+ async admreset(el){const code=el.dataset.code;
+   try{const d=await admCall('reset',{code});adm.created=[{code:d.code,pw:d.pw,name:(adm.list.find(a=>a.code===code)||{}).name||''}];adm.cmode='reset';await admLoad();scrollTo(0,0)}
+   catch(e){adm.msg=e.message;render()}},
+ async admtoggle(el){try{await admCall('edit',{code:el.dataset.code,active:el.dataset.on!=='1'});await admLoad()}catch(e){adm.msg=e.message;render()}},
+ async admdel(el){const code=el.dataset.code;
+   if(ACT.admdel.c!==code){ACT.admdel.c=code;toast(`Xoá ${code} là mất cả tiến độ. Bấm Xoá lần nữa để xác nhận.`);setTimeout(()=>{if(ACT.admdel.c===code)ACT.admdel.c=null},6000);return}
+   ACT.admdel.c=null;try{await admCall('delete',{code});await admLoad();toast('Đã xoá '+code)}catch(e){adm.msg=e.message;render()}},
+ admcopy(){const t=admText();navigator.clipboard?.writeText(t).then(()=>toast('Đã chép danh sách.'),()=>toast('Trình duyệt không cho chép. Dùng nút Tải file CSV.'))},
+ admcsv(){const blob=new Blob(['﻿'+'Ten,Ma,Mat khau\n'+adm.created.map(a=>`"${(a.name||'').replace(/"/g,'""')}",${a.code},${a.pw}`).join('\n')],{type:'text/csv;charset=utf-8'});
+   const u=URL.createObjectURL(blob),l=document.createElement('a');l.href=u;l.download='tai-khoan-'+isoOf(today())+'.csv';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);toast('Đã tải file CSV.')}
 };
+const admText=()=>adm.created.map(a=>`${a.name?a.name+' — ':''}mã ${a.code} · mật khẩu ${a.pw}`).join('\n');
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,6000)}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||!el.dataset.a||el.disabled)return;if(el.tagName==='INPUT')return;const f=ACT[el.dataset.a];if(f)f(el)});
 document.addEventListener('change',e=>{const el=e.target;if(el.dataset.a==='task')return ACT.task(el);const c=el.dataset.c;if(!c||c==='vq')return;
@@ -449,4 +598,10 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;showI
 addEventListener('appinstalled',()=>{installEvt=null;showInstall()});
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
 adbOpen().then(()=>{if(!sub)render()});
-render();initCloud();
+/* gửi ngay khi rời trang hoặc chuyển sang app khác, để đổi máy là có tiến độ mới nhất */
+const flush=()=>{if(AU&&dirty){clearTimeout(saveTimer);push()}};
+addEventListener('pagehide',flush);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)flush();else if(AU)pull()});
+render();
+if(AU&&API)pull();else if(AU&&!API)setSync('err');
+initCloud();
