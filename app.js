@@ -273,7 +273,7 @@ function passage(x){const g=ui.gloss[x.id];return `<div class="${x.k==='g'?'sign
 function vSet(){const {kind,d}=sub,st=setStat(kind,d),items=setItems(kind,d),L=kind==='l';
   const head=`<header class="head"><p class="eyebrow">Ngày ${d} · ${L?'nghe':'đọc'} theo dạng đề</p><h1>${L?'Bài nghe':'Bài đọc'} ngày ${d}</h1>
    <p class="lead">${L?'Bấm Nghe, chọn đáp án rồi mới mở lời thoại. Câu hỏi được đọc sau đoạn hội thoại, giống trong phòng thi.':'Đọc bằng chữ Phồn trước. Chỉ mở bản Giản thể sau khi đã chọn đáp án.'}</p>
-   <p>${st.pass?'<span class="chip ok">Hoàn thành</span> ':''}Đã làm ${st.done}/${st.n} câu, đúng ${st.ok}. Cần đúng từ ${Math.ceil(st.n*.8)} câu.</p>
+   <p>${st.n?`${st.pass?'<span class="chip ok">Hoàn thành</span> ':''}Đã làm ${st.done}/${st.n} câu, đúng ${st.ok}. Cần đúng từ ${Math.ceil(st.n*.8)} câu.`:'<span class="chip mid">Chưa tính điểm</span> Cả buổi này dùng file nghe của sách mà thiết bị chưa có. Nạp file ở trang Hôm nay thì mới tính vào mốc hoàn thành; vẫn làm thử được ngay bây giờ.'}</p>
    <div class="row">${st.done>st.ok?`<button class="btn sm" data-a="redo" data-arg="${kind+d}">Làm lại ${st.done-st.ok} câu sai</button>`:''}<button class="btn sm ghost" data-a="close">Quay lại</button></div>${L?voiceBar()+'<p id="tts-msg" class="warn" hidden></p>':''}</header>`;
   if(L)return head+items.map((x,n)=>{const all=x.qs.every((_,i)=>S.q[x.id+'-'+i+'p']!=null),open=all||ui.shown[x.id];return `<section class="card item"><div class="row between"><h2>${n+1}. ${zh(x.t||(x.qs.length>1?'段落':'對話'))}${x.src?' <span class="chip mid">giọng thật</span>':''}</h2><button class="btn sm" data-a="play" data-id="${x.id}">Nghe</button></div>
    ${x.qs.map(([q,o,lv],i)=>qBlock(x.id,i,q,o,!!x.src&&!x.sq,lv)).join('')}
